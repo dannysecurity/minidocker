@@ -1,0 +1,182 @@
+package image
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+const DefaultRoot = "/var/lib/minidocker/images"
+
+// Store manages local image storage and retrieval.
+type Store struct {
+	root string
+}
+
+// NewStore creates an image store rooted at the given directory.
+func NewStore(root string) *Store {
+	return &Store{root: root}
+}
+
+// Pull downloads an image tarball and unpacks it into the local store.
+// For demo purposes, known image names map to public rootfs tarballs.
+func (s *Store) Pull(name string) error {
+	url, err := resolveURL(name)
+	if err != nil {
+		return err
+	}
+
+	dest := filepath.Join(s.root, sanitize(name))
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return fmt.Errorf("create image dir: %w", err)
+	}
+
+	fmt.Printf("Pulling %s...\n", name)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	}
+
+	tmpFile, err := os.CreateTemp(dest, "download-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	hasher := sha256.New()
+	writer := io.MultiWriter(tmpFile, hasher)
+
+	if _, err := io.Copy(writer, resp.Body); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write download: %w", err)
+	}
+	tmpFile.Close()
+
+	digest := hex.EncodeToString(hasher.Sum(nil))
+	fmt.Printf("Digest: sha256:%s\n", digest[:12])
+
+	rootfs := filepath.Join(dest, "rootfs")
+	if err := os.RemoveAll(rootfs); err != nil {
+		return fmt.Errorf("clean rootfs: %w", err)
+	}
+	if err := os.MkdirAll(rootfs, 0755); err != nil {
+		return fmt.Errorf("create rootfs: %w", err)
+	}
+
+	if err := extractTarGz(tmpPath, rootfs); err != nil {
+		return fmt.Errorf("extract rootfs: %w", err)
+	}
+
+	meta := fmt.Sprintf("name=%s\ndigest=sha256:%s\n", name, digest)
+	if err := os.WriteFile(filepath.Join(dest, "meta"), []byte(meta), 0644); err != nil {
+		return fmt.Errorf("write metadata: %w", err)
+	}
+
+	fmt.Printf("Successfully pulled %s\n", name)
+	return nil
+}
+
+// RootfsPath returns the path to a pulled image's root filesystem.
+func (s *Store) RootfsPath(name string) (string, error) {
+	rootfs := filepath.Join(s.root, sanitize(name), "rootfs")
+	if _, err := os.Stat(rootfs); os.IsNotExist(err) {
+		return "", fmt.Errorf("image %q not found — run: minidocker pull %s", name, name)
+	}
+	return rootfs, nil
+}
+
+func resolveURL(name string) (string, error) {
+	// Demo images: small rootfs tarballs suitable for learning.
+	known := map[string]string{
+		"busybox:latest":  "https://github.com/docker-library/busybox/releases/download/1.36.1/busybox.tar.gz",
+		"alpine:latest":   "https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-minirootfs-3.19.0-x86_64.tar.gz",
+		"demo:latest":     "https://github.com/docker-library/busybox/releases/download/1.36.1/busybox.tar.gz",
+	}
+
+	if url, ok := known[name]; ok {
+		return url, nil
+	}
+	return "", fmt.Errorf("unknown image %q — supported: busybox:latest, alpine:latest, demo:latest", name)
+}
+
+func sanitize(name string) string {
+	return strings.ReplaceAll(name, ":", "_")
+}
+
+func extractTarGz(src, dest string) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		// Not gzipped — try plain tar.
+		f.Seek(0, io.SeekStart)
+		return extractTar(f, dest)
+	}
+	defer gz.Close()
+
+	return extractTar(gz, dest)
+}
+
+func extractTar(r io.Reader, dest string) error {
+	tr := tar.NewReader(r)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		target := filepath.Join(dest, header.Name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)) {
+			return fmt.Errorf("invalid tar path: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return err
+			}
+			out.Close()
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

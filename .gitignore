@@ -1,0 +1,26 @@
+# Binaries
+/minidocker
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+
+# Go workspace
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Runtime state
+/var/lib/minidocker/
+/tmp/minidocker/
