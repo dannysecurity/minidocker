@@ -46,11 +46,12 @@ func NewRuntime(root string, logger *log.Logger) *Runtime {
 }
 
 // Run starts a new container process inside Linux namespaces.
-func (r *Runtime) Run(spec RunSpec) error {
+// It returns the new container ID.
+func (r *Runtime) Run(spec RunSpec) (string, error) {
 	id := generateID()
 	containerDir := filepath.Join(r.root, id)
 	if err := os.MkdirAll(containerDir, 0755); err != nil {
-		return fmt.Errorf("create container dir: %w", err)
+		return "", fmt.Errorf("create container dir: %w", err)
 	}
 
 	info := Info{
@@ -62,19 +63,23 @@ func (r *Runtime) Run(spec RunSpec) error {
 	}
 
 	cmd := exec.Command(spec.Command[0], spec.Command[1:]...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	procAttr := &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWUTS |
 			syscall.CLONE_NEWPID |
 			syscall.CLONE_NEWNS |
 			syscall.CLONE_NEWIPC |
 			syscall.CLONE_NEWNET,
 	}
+	if spec.Rootfs != "" {
+		procAttr.Chroot = spec.Rootfs
+	}
+	cmd.SysProcAttr = procAttr
 
 	var stdout, stderr io.Writer = os.Stdout, os.Stderr
 	if r.logger != nil {
 		logOut, logErr, err := r.logger.Attach(id)
 		if err != nil {
-			return fmt.Errorf("attach logger: %w", err)
+			return "", fmt.Errorf("attach logger: %w", err)
 		}
 		defer logOut.Close()
 		defer logErr.Close()
@@ -92,7 +97,7 @@ func (r *Runtime) Run(spec RunSpec) error {
 	)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start container: %w", err)
+		return "", fmt.Errorf("start container: %w", err)
 	}
 
 	info.PID = cmd.Process.Pid
@@ -104,7 +109,7 @@ func (r *Runtime) Run(spec RunSpec) error {
 	}
 
 	if err := r.saveInfo(containerDir, info); err != nil {
-		return err
+		return id, err
 	}
 
 	fmt.Printf("Container %s started (pid %d)\n", id, info.PID)
@@ -116,7 +121,7 @@ func (r *Runtime) Run(spec RunSpec) error {
 	}
 	_ = r.saveInfo(containerDir, info)
 
-	return nil
+	return id, nil
 }
 
 // List returns all known containers.

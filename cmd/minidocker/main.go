@@ -75,11 +75,12 @@ func cmdRun(args []string) error {
 	}
 
 	rt := container.NewRuntime(container.DefaultRoot, logger)
-	return rt.Run(container.RunSpec{
+	_, err = rt.Run(container.RunSpec{
 		Image:   imageName,
 		Rootfs:  rootfs,
 		Command: command,
 	})
+	return err
 }
 
 func cmdPs() error {

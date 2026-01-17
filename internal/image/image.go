@@ -90,6 +90,56 @@ func (s *Store) Pull(name string) error {
 	return nil
 }
 
+// InstallFromTar unpacks a local rootfs tarball into the image store.
+// This is useful for offline loading and integration tests with fixture images.
+func (s *Store) InstallFromTar(name, tarPath string) error {
+	dest := filepath.Join(s.root, sanitize(name))
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return fmt.Errorf("create image dir: %w", err)
+	}
+
+	data, err := os.ReadFile(tarPath)
+	if err != nil {
+		return fmt.Errorf("read tarball: %w", err)
+	}
+
+	hasher := sha256.New()
+	hasher.Write(data)
+	digest := hex.EncodeToString(hasher.Sum(nil))
+
+	rootfs := filepath.Join(dest, "rootfs")
+	if err := os.RemoveAll(rootfs); err != nil {
+		return fmt.Errorf("clean rootfs: %w", err)
+	}
+	if err := os.MkdirAll(rootfs, 0755); err != nil {
+		return fmt.Errorf("create rootfs: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(dest, "install-*.tar.gz")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	if err := extractTarGz(tmpPath, rootfs); err != nil {
+		return fmt.Errorf("extract rootfs: %w", err)
+	}
+
+	meta := fmt.Sprintf("name=%s\ndigest=sha256:%s\nsource=local\n", name, digest)
+	if err := os.WriteFile(filepath.Join(dest, "meta"), []byte(meta), 0644); err != nil {
+		return fmt.Errorf("write metadata: %w", err)
+	}
+
+	return nil
+}
+
 // RootfsPath returns the path to a pulled image's root filesystem.
 func (s *Store) RootfsPath(name string) (string, error) {
 	rootfs := filepath.Join(s.root, sanitize(name), "rootfs")

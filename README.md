@@ -56,6 +56,28 @@ internal/
 4. **Logs** redirect the container's stdout/stderr through a pipe to a log file
    under `/var/lib/minidocker/containers/<id>/`.
 
+## Testing
+
+Unit tests run without root and use the checked-in `testdata/fixtures/tiny-rootfs.tar.gz`
+fixture instead of downloading images:
+
+```bash
+go test ./...
+```
+
+Integration tests exercise the full run path (namespaces, chroot, log capture) with the
+fixture image and require root:
+
+```bash
+sudo go test -tags=integration ./...
+```
+
+Regenerate the fixture tarball after changing the embedded echo helper:
+
+```bash
+./scripts/build-test-fixture.sh
+```
+
 ## License
 
 MIT
