@@ -15,7 +15,7 @@ networking, and streaming container logs.
 
 ## Requirements
 
-- Linux (namespaces and cgroups v2)
+- Linux (namespaces; cgroups are not used yet)
 - Go 1.22+
 - root privileges (for namespace and network setup)
 
@@ -152,6 +152,18 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
 `ip link set … netns /proc/<pid>/ns/net`. The host bridge `minidocker0` uses
 `172.17.0.1/16`; each container receives `172.17.0.<n>/24` derived from its ID.
 
+### Runtime behavior
+
+- **`run` is foreground** — the CLI blocks until the container process exits,
+  then writes `status: exited` to `config.json`.
+- **Shared container directory** — `container.Runtime` and `log.Logger` both
+  use `/var/lib/minidocker/containers/`; each run creates
+  `<id>/config.json`, `stdout.log`, and `stderr.log` under the same folder.
+- **Best-effort networking** — if veth/bridge setup fails, minidocker prints a
+  warning and keeps the container running without external connectivity.
+- **Offline images** — tests and fixtures load tarballs via
+  `image.Store.InstallFromTar` instead of `Pull`.
+
 ### Package map
 
 ```
@@ -170,9 +182,9 @@ testdata/fixtures/  checked-in rootfs tarball for offline tests
 1. **Pull** downloads a tarball, verifies its digest, and unpacks it into
    `/var/lib/minidocker/images/<name>/rootfs`.
 2. **Run** uses `clone(2)` with `CLONE_NEW*` flags to create an isolated process
-   tree, then `pivot_root(2)` to switch into the container rootfs.
+   tree, then `chroot(2)` into the image rootfs before the workload starts.
 3. **Network** creates a veth pair, moves one end into the container namespace,
-   and attaches the host end to a Linux bridge with NAT.
+   and attaches the host end to the `minidocker0` bridge (no NAT/iptables yet).
 4. **Logs** redirect the container's stdout/stderr through a pipe to a log file
    under `/var/lib/minidocker/containers/<id>/`.
 
