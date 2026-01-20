@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/dannysecurity/minidocker/internal/container"
 	"github.com/dannysecurity/minidocker/internal/image"
@@ -13,43 +14,51 @@ import (
 const usage = `minidocker — a minimal container runtime for learning
 
 Usage:
-  minidocker pull <image>          Download and store an image
-  minidocker run <image> <cmd...>  Run a command in a new container
-  minidocker ps                    List running containers
-  minidocker inspect <id>          Show container metadata as JSON
-  minidocker logs <id>             Show container logs
-  minidocker stop <id>             Stop a running container
+  minidocker pull <image>              Download and store an image
+  minidocker run [-d] <image> <cmd...> Run a command in a new container
+  minidocker ps [-a]                   List containers (running by default)
+  minidocker inspect <id>              Show container metadata as JSON
+  minidocker logs [--tail N] <id>      Show container logs
+  minidocker exec <id> <cmd...>        Run a command in a running container
+  minidocker stop <id>                 Stop a running container
 `
 
 func main() {
-	if len(os.Args) < 2 {
+	os.Exit(runCLI(os.Args))
+}
+
+func runCLI(args []string) int {
+	if len(args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
-		os.Exit(1)
+		return 1
 	}
 
 	var err error
-	switch os.Args[1] {
+	switch args[1] {
 	case "pull":
-		err = cmdPull(os.Args[2:])
+		err = cmdPull(args[2:])
 	case "run":
-		err = cmdRun(os.Args[2:])
+		err = cmdRun(args[2:])
 	case "ps":
-		err = cmdPs()
+		err = cmdPs(args[2:])
 	case "inspect":
-		err = cmdInspect(os.Args[2:])
+		err = cmdInspect(args[2:])
 	case "logs":
-		err = cmdLogs(os.Args[2:])
+		err = cmdLogs(args[2:])
+	case "exec":
+		err = cmdExec(args[2:])
 	case "stop":
-		err = cmdStop(os.Args[2:])
+		err = cmdStop(args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", os.Args[1], usage)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", args[1], usage)
+		return 1
 	}
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "minidocker: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func cmdPull(args []string) error {
@@ -61,11 +70,22 @@ func cmdPull(args []string) error {
 }
 
 func cmdRun(args []string) error {
-	if len(args) < 2 {
-		return fmt.Errorf("usage: minidocker run <image> <command...>")
+	detach := false
+	var positional []string
+	for _, arg := range args {
+		switch arg {
+		case "-d", "--detach":
+			detach = true
+		default:
+			positional = append(positional, arg)
+		}
 	}
-	imageName := args[0]
-	command := args[1:]
+
+	if len(positional) < 2 {
+		return fmt.Errorf("usage: minidocker run [-d] <image> <command...>")
+	}
+	imageName := positional[0]
+	command := positional[1:]
 
 	store := image.NewStore(image.DefaultRoot)
 	rootfs, err := store.RootfsPath(imageName)
@@ -83,20 +103,28 @@ func cmdRun(args []string) error {
 		Image:   imageName,
 		Rootfs:  rootfs,
 		Command: command,
+		Detach:  detach,
 	})
 	return err
 }
 
-func cmdPs() error {
+func cmdPs(args []string) error {
+	all := false
+	for _, arg := range args {
+		switch arg {
+		case "-a", "--all":
+			all = true
+		default:
+			return fmt.Errorf("unknown flag for ps: %s", arg)
+		}
+	}
+
 	rt := container.NewRuntime(container.DefaultRoot, nil)
-	containers, err := rt.List()
+	containers, err := rt.ListFiltered(all)
 	if err != nil {
 		return err
 	}
-	if len(containers) == 0 {
-		fmt.Println("CONTAINER ID  IMAGE  STATUS  COMMAND")
-		return nil
-	}
+
 	fmt.Println("CONTAINER ID  IMAGE  STATUS  COMMAND")
 	for _, c := range containers {
 		fmt.Printf("%-12s  %-20s  %-8s  %s\n", c.ID, c.Image, c.Status, c.Command)
@@ -122,14 +150,46 @@ func cmdInspect(args []string) error {
 }
 
 func cmdLogs(args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: minidocker logs <container-id>")
+	tail := 0
+	var ids []string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--tail":
+			if i+1 >= len(args) {
+				return fmt.Errorf("usage: minidocker logs [--tail N] <container-id>")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 0 {
+				return fmt.Errorf("--tail requires a non-negative integer")
+			}
+			tail = n
+			i++
+		default:
+			ids = append(ids, args[i])
+		}
 	}
+
+	if len(ids) != 1 {
+		return fmt.Errorf("usage: minidocker logs [--tail N] <container-id>")
+	}
+
 	logger, err := log.NewLogger(log.DefaultRoot)
 	if err != nil {
 		return err
 	}
-	out, err := logger.Read(args[0])
+
+	rt := container.NewRuntime(container.DefaultRoot, nil)
+	id, err := rt.ResolveID(ids[0])
+	if err != nil {
+		return err
+	}
+
+	var out []byte
+	if tail > 0 {
+		out, err = logger.ReadTail(id, tail)
+	} else {
+		out, err = logger.Read(id)
+	}
 	if err != nil {
 		return err
 	}
@@ -137,10 +197,22 @@ func cmdLogs(args []string) error {
 	return nil
 }
 
+func cmdExec(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: minidocker exec <container-id> <command...>")
+	}
+	rt := container.NewRuntime(container.DefaultRoot, nil)
+	return rt.Exec(args[0], args[1:])
+}
+
 func cmdStop(args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("usage: minidocker stop <container-id>")
 	}
 	rt := container.NewRuntime(container.DefaultRoot, nil)
-	return rt.Stop(args[0])
+	id, err := rt.ResolveID(args[0])
+	if err != nil {
+		return err
+	}
+	return rt.Stop(id)
 }

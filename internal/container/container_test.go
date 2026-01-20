@@ -90,3 +90,69 @@ func TestListSkipsInvalidEntries(t *testing.T) {
 		t.Fatalf("List()[0].ID = %q, want %q", containers[0].ID, valid.ID)
 	}
 }
+
+func TestListFilteredRunningOnly(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	running := Info{
+		ID:      "running00001",
+		Image:   "tiny:latest",
+		Command: "/bin/sh",
+		Status:  "running",
+	}
+	exited := Info{
+		ID:      "exited000001",
+		Image:   "tiny:latest",
+		Command: "/bin/echo hi",
+		Status:  "exited",
+	}
+	writeContainerConfig(t, root, running.ID, running)
+	writeContainerConfig(t, root, exited.ID, exited)
+
+	containers, err := rt.ListFiltered(false)
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	if len(containers) != 1 {
+		t.Fatalf("ListFiltered(false) returned %d containers, want 1", len(containers))
+	}
+	if containers[0].ID != running.ID {
+		t.Fatalf("ListFiltered()[0].ID = %q, want %q", containers[0].ID, running.ID)
+	}
+}
+
+func TestResolveID(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	want := Info{
+		ID:      "abc123def456",
+		Image:   "busybox:latest",
+		Command: "/bin/sh",
+		Status:  "exited",
+	}
+	writeContainerConfig(t, root, want.ID, want)
+
+	got, err := rt.ResolveID("abc123")
+	if err != nil {
+		t.Fatalf("ResolveID: %v", err)
+	}
+	if got != want.ID {
+		t.Fatalf("ResolveID() = %q, want %q", got, want.ID)
+	}
+}
+
+func TestResolveIDAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	for _, id := range []string{"aaa111111111", "aaa222222222"} {
+		writeContainerConfig(t, root, id, Info{ID: id, Status: "exited"})
+	}
+
+	_, err := rt.ResolveID("aaa")
+	if err == nil {
+		t.Fatal("expected ambiguous id error")
+	}
+}

@@ -45,6 +45,16 @@ func (l *Logger) Attach(containerID string) (stdout, stderr io.WriteCloser, err 
 
 // Read returns combined stdout and stderr logs for a container.
 func (l *Logger) Read(containerID string) ([]byte, error) {
+	return l.readCombined(containerID, 0)
+}
+
+// ReadTail returns the last n bytes of combined stdout and stderr logs.
+// When n is zero or negative the full log is returned.
+func (l *Logger) ReadTail(containerID string, n int) ([]byte, error) {
+	return l.readCombined(containerID, n)
+}
+
+func (l *Logger) readCombined(containerID string, tail int) ([]byte, error) {
 	dir := filepath.Join(l.root, containerID)
 
 	var combined []byte
@@ -61,6 +71,10 @@ func (l *Logger) Read(containerID string) ([]byte, error) {
 
 	if len(combined) == 0 {
 		return nil, fmt.Errorf("no logs found for container %q", containerID)
+	}
+
+	if tail > 0 && len(combined) > tail {
+		combined = combined[len(combined)-tail:]
 	}
 	return combined, nil
 }
