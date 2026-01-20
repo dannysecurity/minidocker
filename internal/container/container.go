@@ -124,6 +124,15 @@ func (r *Runtime) Run(spec RunSpec) (string, error) {
 	return id, nil
 }
 
+// Inspect returns metadata for a single container.
+func (r *Runtime) Inspect(id string) (Info, error) {
+	info, err := r.loadInfo(filepath.Join(r.root, id))
+	if err != nil {
+		return Info{}, fmt.Errorf("container %q not found", id)
+	}
+	return info, nil
+}
+
 // List returns all known containers.
 func (r *Runtime) List() ([]Info, error) {
 	entries, err := os.ReadDir(r.root)

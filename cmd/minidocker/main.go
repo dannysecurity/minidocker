@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -15,6 +16,7 @@ Usage:
   minidocker pull <image>          Download and store an image
   minidocker run <image> <cmd...>  Run a command in a new container
   minidocker ps                    List running containers
+  minidocker inspect <id>          Show container metadata as JSON
   minidocker logs <id>             Show container logs
   minidocker stop <id>             Stop a running container
 `
@@ -33,6 +35,8 @@ func main() {
 		err = cmdRun(os.Args[2:])
 	case "ps":
 		err = cmdPs()
+	case "inspect":
+		err = cmdInspect(os.Args[2:])
 	case "logs":
 		err = cmdLogs(os.Args[2:])
 	case "stop":
@@ -97,6 +101,23 @@ func cmdPs() error {
 	for _, c := range containers {
 		fmt.Printf("%-12s  %-20s  %-8s  %s\n", c.ID, c.Image, c.Status, c.Command)
 	}
+	return nil
+}
+
+func cmdInspect(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: minidocker inspect <container-id>")
+	}
+	rt := container.NewRuntime(container.DefaultRoot, nil)
+	info, err := rt.Inspect(args[0])
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
 	return nil
 }
 
