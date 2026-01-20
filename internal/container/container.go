@@ -20,10 +20,11 @@ const DefaultRoot = "/var/lib/minidocker/containers"
 
 // RunSpec describes how to start a container.
 type RunSpec struct {
-	Image   string
-	Rootfs  string
-	Command []string
-	Detach  bool
+	Image        string
+	Rootfs       string
+	Command      []string
+	Detach       bool
+	PortMappings []network.PortMapping
 }
 
 // Info holds metadata about a running or stopped container.

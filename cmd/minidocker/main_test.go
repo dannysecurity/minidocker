@@ -58,6 +58,23 @@ func TestCmdRunUsageValidation(t *testing.T) {
 	}
 }
 
+func TestCmdRunPortMappingValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing publish value", args: []string{"-p"}},
+		{name: "invalid publish value", args: []string{"-p", "8080", "busybox:latest", "echo"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := cmdRun(tc.args); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func TestCmdLogsUsageValidation(t *testing.T) {
 	tests := []struct {
 		name string

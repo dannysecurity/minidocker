@@ -9,13 +9,15 @@ import (
 	"github.com/dannysecurity/minidocker/internal/container"
 	"github.com/dannysecurity/minidocker/internal/image"
 	"github.com/dannysecurity/minidocker/internal/log"
+	"github.com/dannysecurity/minidocker/internal/network"
 )
 
 const usage = `minidocker — a minimal container runtime for learning
 
 Usage:
   minidocker pull <image>              Download and store an image
-  minidocker run [-d] <image> <cmd...> Run a command in a new container
+  minidocker run [-d] [-p host:container] <image> <cmd...>
+                                       Run a command in a new container
   minidocker ps [-a]                   List containers (running by default)
   minidocker inspect <id>              Show container metadata as JSON
   minidocker logs [--tail N] <id>      Show container logs
@@ -71,18 +73,29 @@ func cmdPull(args []string) error {
 
 func cmdRun(args []string) error {
 	detach := false
+	var portMappings []network.PortMapping
 	var positional []string
-	for _, arg := range args {
-		switch arg {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "-d", "--detach":
 			detach = true
+		case "-p", "--publish":
+			if i+1 >= len(args) {
+				return fmt.Errorf("usage: minidocker run [-d] [-p host:container] <image> <command...>")
+			}
+			mapping, err := network.ParsePortMapping(args[i+1])
+			if err != nil {
+				return err
+			}
+			portMappings = append(portMappings, mapping)
+			i++
 		default:
-			positional = append(positional, arg)
+			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) < 2 {
-		return fmt.Errorf("usage: minidocker run [-d] <image> <command...>")
+		return fmt.Errorf("usage: minidocker run [-d] [-p host:container] <image> <command...>")
 	}
 	imageName := positional[0]
 	command := positional[1:]
@@ -100,10 +113,11 @@ func cmdRun(args []string) error {
 
 	rt := container.NewRuntime(container.DefaultRoot, logger)
 	_, err = rt.Run(container.RunSpec{
-		Image:   imageName,
-		Rootfs:  rootfs,
-		Command: command,
-		Detach:  detach,
+		Image:        imageName,
+		Rootfs:       rootfs,
+		Command:      command,
+		Detach:       detach,
+		PortMappings: portMappings,
 	})
 	return err
 }
