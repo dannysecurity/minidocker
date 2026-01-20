@@ -137,7 +137,11 @@ func cmdInspect(args []string) error {
 		return fmt.Errorf("usage: minidocker inspect <container-id>")
 	}
 	rt := container.NewRuntime(container.DefaultRoot, nil)
-	info, err := rt.Inspect(args[0])
+	id, err := rt.ResolveID(args[0])
+	if err != nil {
+		return err
+	}
+	info, err := rt.Inspect(id)
 	if err != nil {
 		return err
 	}

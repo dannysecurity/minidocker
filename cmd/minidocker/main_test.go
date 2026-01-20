@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +45,43 @@ func TestCmdPsAllFlagParsing(t *testing.T) {
 
 	if !bytes.Contains(buf.Bytes(), []byte("CONTAINER ID")) {
 		t.Fatalf("cmdPs output = %q, want header", buf.String())
+	}
+}
+
+func TestCmdRunUsageValidation(t *testing.T) {
+	err := cmdRun([]string{"busybox:latest"})
+	if err == nil {
+		t.Fatal("expected error for missing command")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("error = %q, want usage message", err)
+	}
+}
+
+func TestCmdLogsUsageValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing id", args: []string{}},
+		{name: "missing tail value", args: []string{"--tail"}},
+		{name: "invalid tail", args: []string{"--tail", "x"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := cmdLogs(tc.args); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestCmdExecUsageValidation(t *testing.T) {
+	err := cmdExec([]string{"abc123"})
+	if err == nil {
+		t.Fatal("expected error for missing command")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("error = %q, want usage message", err)
 	}
 }
