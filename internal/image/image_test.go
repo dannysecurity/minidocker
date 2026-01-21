@@ -1,6 +1,8 @@
 package image
 
 import (
+	"archive/tar"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,5 +94,73 @@ func TestInstallFromTarMissingFile(t *testing.T) {
 	err := store.InstallFromTar("tiny:latest", "/nonexistent/tiny-rootfs.tar.gz")
 	if err == nil {
 		t.Fatal("expected error for missing tarball")
+	}
+}
+
+func TestExtractTarRejectsPathTraversal(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		t.Fatalf("mkdir rootfs: %v", err)
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "../escape/evil",
+		Typeflag: tar.TypeReg,
+		Size:     4,
+		Mode:     0644,
+	}); err != nil {
+		t.Fatalf("write tar header: %v", err)
+	}
+	if _, err := tw.Write([]byte("pwn\n")); err != nil {
+		t.Fatalf("write tar body: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	err := extractTar(&buf, dest)
+	if err == nil {
+		t.Fatal("expected path traversal to be rejected")
+	}
+	if !strings.Contains(err.Error(), "invalid tar path") {
+		t.Fatalf("error = %q, want invalid tar path", err)
+	}
+}
+
+func TestExtractTarAllowsNormalPaths(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "rootfs")
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		t.Fatalf("mkdir rootfs: %v", err)
+	}
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "bin/echo",
+		Typeflag: tar.TypeReg,
+		Size:     5,
+		Mode:     0755,
+	}); err != nil {
+		t.Fatalf("write tar header: %v", err)
+	}
+	if _, err := tw.Write([]byte("hello")); err != nil {
+		t.Fatalf("write tar body: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+
+	if err := extractTar(&buf, dest); err != nil {
+		t.Fatalf("extractTar: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dest, "bin", "echo"))
+	if err != nil {
+		t.Fatalf("read extracted file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("file contents = %q, want hello", data)
 	}
 }

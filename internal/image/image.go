@@ -229,6 +229,15 @@ func parseMeta(content string) ImageInfo {
 	return info
 }
 
+func validateExtractPath(dest, target string) error {
+	cleanDest := filepath.Clean(dest)
+	cleanTarget := filepath.Clean(target)
+	if cleanTarget != cleanDest && !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) {
+		return fmt.Errorf("path escapes destination")
+	}
+	return nil
+}
+
 func extractTarGz(src, dest string) error {
 	f, err := os.Open(src)
 	if err != nil {
@@ -259,7 +268,7 @@ func extractTar(r io.Reader, dest string) error {
 		}
 
 		target := filepath.Join(dest, header.Name)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)) {
+		if err := validateExtractPath(dest, target); err != nil {
 			return fmt.Errorf("invalid tar path: %s", header.Name)
 		}
 
