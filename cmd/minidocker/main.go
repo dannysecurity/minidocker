@@ -19,7 +19,7 @@ Usage:
   minidocker images                    List locally stored images
   minidocker run [-d] [-p host:container] <image> <cmd...>
                                        Run a command in a new container
-  minidocker ps [-a]                   List containers (running by default)
+  minidocker ps [-a] [-q]              List containers (running by default)
   minidocker inspect <id>              Show container metadata as JSON
   minidocker logs [--tail N] <id>      Show container logs
   minidocker exec <id> <cmd...>        Run a command in a running container
@@ -156,10 +156,13 @@ func cmdRun(args []string) error {
 
 func cmdPs(args []string) error {
 	all := false
+	quiet := false
 	for _, arg := range args {
 		switch arg {
 		case "-a", "--all":
 			all = true
+		case "-q", "--quiet":
+			quiet = true
 		default:
 			return fmt.Errorf("unknown flag for ps: %s", arg)
 		}
@@ -171,9 +174,15 @@ func cmdPs(args []string) error {
 		return err
 	}
 
-	fmt.Println("CONTAINER ID  IMAGE  STATUS  COMMAND")
+	if !quiet {
+		fmt.Println("CONTAINER ID  IMAGE  STATUS  COMMAND")
+	}
 	for _, c := range containers {
-		fmt.Printf("%-12s  %-20s  %-8s  %s\n", c.ID, c.Image, c.Status, c.Command)
+		if quiet {
+			fmt.Println(c.ID)
+		} else {
+			fmt.Printf("%-12s  %-20s  %-8s  %s\n", c.ID, c.Image, c.Status, c.Command)
+		}
 	}
 	return nil
 }

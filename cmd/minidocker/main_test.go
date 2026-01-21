@@ -48,6 +48,40 @@ func TestCmdPsAllFlagParsing(t *testing.T) {
 	}
 }
 
+func TestCmdPsQuietFlag(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan struct{})
+	var buf bytes.Buffer
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	if err := cmdPs([]string{"-q"}); err != nil {
+		t.Fatalf("cmdPs: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+	<-done
+
+	if bytes.Contains(buf.Bytes(), []byte("CONTAINER ID")) {
+		t.Fatalf("cmdPs -q output = %q, want no header", buf.String())
+	}
+}
+
+func TestCmdPsUnknownFlag(t *testing.T) {
+	if err := cmdPs([]string{"--bogus"}); err == nil {
+		t.Fatal("expected error for unknown flag")
+	}
+}
+
 func TestCmdRunUsageValidation(t *testing.T) {
 	err := cmdRun([]string{"busybox:latest"})
 	if err == nil {
