@@ -25,6 +25,7 @@ networking, and streaming container logs.
 
 ```bash
 go build -o minidocker ./cmd/minidocker
+go build -o container-init ./cmd/container-init
 
 # Pull a minimal rootfs (busybox-based demo image)
 sudo ./minidocker pull busybox:latest
@@ -73,7 +74,8 @@ flowchart TB
 
   subgraph Internal["internal/"]
     image["image.Store\npull, list, unpack, rootfs lookup"]
-    container["container.Runtime\nnamespaces, lifecycle, rm"]
+    container["container.Runtime\nlifecycle, metadata, rm"]
+    isolation["isolation.Wrapper\nnamespaces, init, rootfs prep"]
     network["network.Manager\nbridge + veth"]
     log["log.Logger\nstdout/stderr capture"]
   end
@@ -83,6 +85,7 @@ flowchart TB
   run --> image
   run --> container
   run --> log
+  container --> isolation
   container --> network
   ps --> container
   inspect --> container
@@ -95,7 +98,8 @@ flowchart TB
 | Package | Responsibility | Default on-disk root |
 |---------|----------------|----------------------|
 | `image` | Download tarballs, verify SHA-256, extract rootfs, list stored images | `/var/lib/minidocker/images/` |
-| `container` | Create namespaces, start processes, persist metadata, stop/remove | `/var/lib/minidocker/containers/` |
+| `container` | Persist metadata, stop/remove containers, orchestrate run lifecycle | `/var/lib/minidocker/containers/` |
+| `isolation` | Namespace flags, `container-init` wrapper, hostname and mount setup | (in-memory / child process) |
 | `network` | Bridge `minidocker0`, veth pairs, container IP allocation | (kernel interfaces) |
 | `log` | Attach stdout/stderr writers per container | same dir as `container` metadata |
 
@@ -118,8 +122,8 @@ sequenceDiagram
   CLI->>Image: RootfsPath(name)
   CLI->>Logger: NewLogger + Attach(id)
   CLI->>Runtime: Run(spec)
-  Runtime->>Runtime: clone(2) with namespace flags
-  Runtime->>Runtime: chroot into rootfs
+  Runtime->>Runtime: isolation.Wrapper.Command
+  Runtime->>Runtime: container-init sets hostname, mounts proc, chroot
   Runtime->>Net: Setup(id, pid)
   Net->>Net: veth pair + bridge + IP
   Runtime->>Runtime: save config.json
@@ -200,15 +204,29 @@ sudo ./minidocker inspect abc123def456
 
 ### Isolation model
 
-`container.Runtime.Run` starts the workload with these `clone(2)` flags:
+Process isolation lives in `internal/isolation` and is applied through a small
+`container-init` helper (`cmd/container-init`). `container.Runtime` delegates
+namespace setup to `isolation.Wrapper`, which starts `container-init` as PID 1
+inside these `clone(2)` flags:
 
 | Flag | Namespace | Effect |
 |------|-----------|--------|
-| `CLONE_NEWUTS` | UTS | Separate hostname (set to container ID) |
-| `CLONE_NEWPID` | PID | Process tree isolated from host |
-| `CLONE_NEWNS` | Mount | Private mount namespace; rootfs via `chroot` |
+| `CLONE_NEWUTS` | UTS | Separate hostname (set via `sethostname(2)` to container ID) |
+| `CLONE_NEWPID` | PID | Process tree isolated from host; init reaps zombies |
+| `CLONE_NEWNS` | Mount | Private mount namespace; rootfs via `chroot(2)` |
 | `CLONE_NEWIPC` | IPC | Separate SysV IPC / POSIX message queues |
 | `CLONE_NEWNET` | Network | Dedicated network stack; veth moved in after start |
+
+Inside the new namespaces, `container-init`:
+
+1. Sets the UTS hostname to the container ID
+2. Marks mounts `MS_PRIVATE` so changes stay inside the container
+3. `chroot(2)` into the image rootfs when one is configured
+4. Mounts a fresh `procfs` at `/proc`
+5. Execs the user command and reaps orphaned children until the workload exits
+
+Place `container-init` next to the `minidocker` binary, or set `MINIDOCKER_INIT`
+to its path. Integration tests build the helper automatically.
 
 Networking runs **after** `cmd.Start()` so the child PID is available for
 `ip link set … netns /proc/<pid>/ns/net`. The host bridge `minidocker0` uses
@@ -233,22 +251,25 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
 ### Package map
 
 ```
-cmd/minidocker/     CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm)
+cmd/minidocker/       CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm)
+cmd/container-init/   PID 1 helper that prepares rootfs and execs the workload
 internal/
-  image/            image store, listing, and rootfs extraction
-  container/        namespace setup, process lifecycle, metadata I/O, removal
-  network/          bridge and veth management, port mapping parse helpers
-  log/              stdout/stderr capture
-  testutil/         shared helpers for unit and integration tests
-testdata/fixtures/  checked-in rootfs tarball for offline tests
+  image/              image store, listing, and rootfs extraction
+  isolation/          namespace wrapper, clone flags, rootfs preparation
+  container/          process lifecycle, metadata I/O, removal
+  network/            bridge and veth management, port mapping parse helpers
+  log/                stdout/stderr capture
+  testutil/           shared helpers for unit and integration tests
+testdata/fixtures/    checked-in rootfs tarball for offline tests
 ```
 
 ## How it works
 
 1. **Pull** downloads a tarball, verifies its digest, and unpacks it into
    `/var/lib/minidocker/images/<name>/rootfs`.
-2. **Run** uses `clone(2)` with `CLONE_NEW*` flags to create an isolated process
-   tree, then `chroot(2)` into the image rootfs before the workload starts.
+2. **Run** uses `isolation.Wrapper` to start `container-init` with `clone(2)`
+   namespace flags. The init process sets the hostname, chroots into the image
+   rootfs, mounts `/proc`, and execs the requested command.
 3. **Network** creates a veth pair, moves one end into the container namespace,
    and attaches the host end to the `minidocker0` bridge (no NAT/iptables yet).
 4. **Logs** redirect the container's stdout/stderr through a pipe to a log file

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dannysecurity/minidocker/internal/isolation"
 	"github.com/dannysecurity/minidocker/internal/log"
 	"github.com/dannysecurity/minidocker/internal/network"
 )
@@ -39,13 +40,33 @@ type Info struct {
 
 // Runtime manages container lifecycle.
 type Runtime struct {
-	root   string
-	logger *log.Logger
+	root            string
+	logger          *log.Logger
+	isolationInit   string
+	isolationWrapper *isolation.Wrapper
 }
 
 // NewRuntime creates a container runtime.
 func NewRuntime(root string, logger *log.Logger) *Runtime {
 	return &Runtime{root: root, logger: logger}
+}
+
+// SetIsolationInit overrides the path to the container-init helper binary.
+// This is primarily used by integration tests; production installs place
+// container-init next to the minidocker binary.
+func (r *Runtime) SetIsolationInit(path string) {
+	r.isolationInit = path
+	r.isolationWrapper = nil
+}
+
+func (r *Runtime) wrapper() *isolation.Wrapper {
+	if r.isolationWrapper == nil {
+		r.isolationWrapper = isolation.NewWrapper()
+		if r.isolationInit != "" {
+			r.isolationWrapper.InitPath = r.isolationInit
+		}
+	}
+	return r.isolationWrapper
 }
 
 // Run starts a new container process inside Linux namespaces.
@@ -98,18 +119,14 @@ func (r *Runtime) startContainer(spec RunSpec) (string, *exec.Cmd, []io.Closer, 
 		return "", nil, nil, fmt.Errorf("create container dir: %w", err)
 	}
 
-	cmd := exec.Command(spec.Command[0], spec.Command[1:]...)
-	procAttr := &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS |
-			syscall.CLONE_NEWPID |
-			syscall.CLONE_NEWNS |
-			syscall.CLONE_NEWIPC |
-			syscall.CLONE_NEWNET,
+	cmd, err := r.wrapper().Command(isolation.Config{
+		ID:      id,
+		Rootfs:  spec.Rootfs,
+		Command: spec.Command,
+	})
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("build isolated command: %w", err)
 	}
-	if spec.Rootfs != "" {
-		procAttr.Chroot = spec.Rootfs
-	}
-	cmd.SysProcAttr = procAttr
 
 	var stdout, stderr io.Writer = os.Stdout, os.Stderr
 	var closers []io.Closer
@@ -130,11 +147,6 @@ func (r *Runtime) startContainer(spec RunSpec) (string, *exec.Cmd, []io.Closer, 
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = append(os.Environ(),
-		"MINIDOCKER_ROOTFS="+spec.Rootfs,
-		"MINIDOCKER_HOSTNAME="+id,
-	)
-
 	if err := cmd.Start(); err != nil {
 		closeWriters(closers)
 		return "", nil, nil, fmt.Errorf("start container: %w", err)

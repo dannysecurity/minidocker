@@ -36,6 +36,7 @@ func TestIntegration_RunFixtureEcho(t *testing.T) {
 	}
 
 	rt := NewRuntime(containersRoot, logger)
+	rt.SetIsolationInit(testutil.BuildContainerInit(t, t.TempDir()))
 	id, err := rt.Run(RunSpec{
 		Image:   "tiny:latest",
 		Rootfs:  rootfs,
@@ -76,5 +77,49 @@ func TestIntegration_RunFixtureEcho(t *testing.T) {
 	}
 	if found.Image != "tiny:latest" {
 		t.Fatalf("image = %q, want tiny:latest", found.Image)
+	}
+}
+
+func TestIntegration_HostnameSetInUTSNamespace(t *testing.T) {
+	testutil.RequireRoot(t)
+
+	root := t.TempDir()
+	imagesRoot := filepath.Join(root, "images")
+	containersRoot := filepath.Join(root, "containers")
+
+	store := image.NewStore(imagesRoot)
+	fixture := testutil.FixturePath(t, "tiny-rootfs.tar.gz")
+	if err := store.InstallFromTar("tiny:latest", fixture); err != nil {
+		t.Fatalf("InstallFromTar: %v", err)
+	}
+
+	rootfs, err := store.RootfsPath("tiny:latest")
+	if err != nil {
+		t.Fatalf("RootfsPath: %v", err)
+	}
+
+	logger, err := log.NewLogger(containersRoot)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+
+	rt := NewRuntime(containersRoot, logger)
+	rt.SetIsolationInit(testutil.BuildContainerInit(t, t.TempDir()))
+	id, err := rt.Run(RunSpec{
+		Image:   "tiny:latest",
+		Rootfs:  rootfs,
+		Command: []string{"/bin/readhostname"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logs, err := logger.Read(id)
+	if err != nil {
+		t.Fatalf("Read logs: %v", err)
+	}
+	got := strings.TrimSpace(string(logs))
+	if got != id {
+		t.Fatalf("hostname = %q, want container id %q", got, id)
 	}
 }

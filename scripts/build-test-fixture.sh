@@ -31,8 +31,29 @@ EOF
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
   -o "${rootfs}/bin/echo" "${build_dir}/echo.go"
+
+cat > "${build_dir}/readhostname.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	data, err := os.ReadFile("/proc/sys/kernel/hostname")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Print(string(data))
+}
+EOF
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
+  -o "${rootfs}/bin/readhostname" "${build_dir}/readhostname.go"
 echo "tiny-fixture" > "${rootfs}/etc/hostname"
-chmod +x "${rootfs}/bin/echo"
+chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname"
 
 mkdir -p "${fixture_dir}"
 tar -C "${rootfs}" -czf "${fixture_dir}/tiny-rootfs.tar.gz" bin etc proc dev tmp

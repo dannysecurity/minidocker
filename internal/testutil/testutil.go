@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -39,4 +40,17 @@ func ModuleRoot(t *testing.T) string {
 func FixturePath(t *testing.T, name string) string {
 	t.Helper()
 	return filepath.Join(ModuleRoot(t), "testdata", "fixtures", name)
+}
+
+// BuildContainerInit compiles the container-init helper into dir and returns its path.
+func BuildContainerInit(t *testing.T, dir string) string {
+	t.Helper()
+
+	out := filepath.Join(dir, "container-init")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/container-init")
+	cmd.Dir = ModuleRoot(t)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build container-init: %v\n%s", err, output)
+	}
+	return out
 }
