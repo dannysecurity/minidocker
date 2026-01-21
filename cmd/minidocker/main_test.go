@@ -102,3 +102,44 @@ func TestCmdExecUsageValidation(t *testing.T) {
 		t.Fatalf("error = %q, want usage message", err)
 	}
 }
+
+func TestCmdImagesEmpty(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan struct{})
+	var buf bytes.Buffer
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(done)
+	}()
+
+	// Use a temp images root by overriding via env is not supported;
+	// cmdImages reads image.DefaultRoot. Just verify header and no error
+	// when the default store is empty or populated.
+	if err := cmdImages(nil); err != nil {
+		t.Fatalf("cmdImages: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+	<-done
+
+	if !bytes.Contains(buf.Bytes(), []byte("REPOSITORY")) {
+		t.Fatalf("cmdImages output = %q, want header", buf.String())
+	}
+}
+
+func TestCmdRmUsageValidation(t *testing.T) {
+	err := cmdRm(nil)
+	if err == nil {
+		t.Fatal("expected error for missing id")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("error = %q, want usage message", err)
+	}
+}

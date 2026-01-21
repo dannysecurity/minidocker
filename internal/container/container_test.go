@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -154,5 +155,51 @@ func TestResolveIDAmbiguous(t *testing.T) {
 	_, err := rt.ResolveID("aaa")
 	if err == nil {
 		t.Fatal("expected ambiguous id error")
+	}
+}
+
+func TestRemoveExited(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	id := "exited000001"
+	writeContainerConfig(t, root, id, Info{
+		ID:     id,
+		Status: "exited",
+	})
+
+	if err := rt.Remove(id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, id)); !os.IsNotExist(err) {
+		t.Fatalf("container dir still exists after Remove")
+	}
+}
+
+func TestRemoveRunning(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	id := "running00001"
+	writeContainerConfig(t, root, id, Info{
+		ID:     id,
+		Status: "running",
+		PID:    os.Getpid(),
+	})
+
+	err := rt.Remove(id)
+	if err == nil {
+		t.Fatal("expected error removing running container")
+	}
+	if !strings.Contains(err.Error(), "running") {
+		t.Fatalf("error = %q, want running message", err)
+	}
+}
+
+func TestRemoveNotFound(t *testing.T) {
+	rt := NewRuntime(t.TempDir(), nil)
+
+	if err := rt.Remove("missing"); err == nil {
+		t.Fatal("expected error for missing container")
 	}
 }

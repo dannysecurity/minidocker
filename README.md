@@ -8,10 +8,12 @@ networking, and streaming container logs.
 
 ## Features
 
-- **Images** — fetch, unpack, and store OCI-style root filesystems locally
+- **Images** — fetch, unpack, and store OCI-style root filesystems locally; list with `images`
 - **Run** — start processes inside new PID, mount, UTS, IPC, and network namespaces
 - **Logs** — capture stdout/stderr from running containers
 - **Networking** — create veth pairs and assign IP addresses on a bridge
+- **Exec** — attach to a running container's namespaces via `nsenter`
+- **Lifecycle** — stop running containers and remove stopped ones with `rm`
 
 ## Requirements
 
@@ -27,14 +29,24 @@ go build -o minidocker ./cmd/minidocker
 # Pull a minimal rootfs (busybox-based demo image)
 sudo ./minidocker pull busybox:latest
 
+# List images stored locally
+sudo ./minidocker images
+
 # Run an interactive shell
 sudo ./minidocker run busybox:latest /bin/sh
+
+# Run detached and publish a port (parsed at CLI; NAT forwarding not yet wired)
+sudo ./minidocker run -d -p 8080:80 busybox:latest /bin/httpd -f
 
 # View logs from a detached container
 sudo ./minidocker logs <container-id>
 
 # Inspect container metadata (JSON)
 sudo ./minidocker inspect <container-id>
+
+# Stop and remove a container
+sudo ./minidocker stop <container-id>
+sudo ./minidocker rm <container-id>
 ```
 
 ## Architecture
@@ -49,21 +61,25 @@ itself.
 flowchart TB
   subgraph CLI["cmd/minidocker"]
     pull[pull]
+    images[images]
     run[run]
     ps[ps]
     inspect[inspect]
     logs[logs]
+    exec[exec]
     stop[stop]
+    rm[rm]
   end
 
   subgraph Internal["internal/"]
-    image["image.Store\npull, unpack, rootfs lookup"]
-    container["container.Runtime\nnamespaces, lifecycle"]
+    image["image.Store\npull, list, unpack, rootfs lookup"]
+    container["container.Runtime\nnamespaces, lifecycle, rm"]
     network["network.Manager\nbridge + veth"]
     log["log.Logger\nstdout/stderr capture"]
   end
 
   pull --> image
+  images --> image
   run --> image
   run --> container
   run --> log
@@ -71,13 +87,15 @@ flowchart TB
   ps --> container
   inspect --> container
   logs --> log
+  exec --> container
   stop --> container
+  rm --> container
 ```
 
 | Package | Responsibility | Default on-disk root |
 |---------|----------------|----------------------|
-| `image` | Download tarballs, verify SHA-256, extract rootfs | `/var/lib/minidocker/images/` |
-| `container` | Create namespaces, start processes, persist metadata | `/var/lib/minidocker/containers/` |
+| `image` | Download tarballs, verify SHA-256, extract rootfs, list stored images | `/var/lib/minidocker/images/` |
+| `container` | Create namespaces, start processes, persist metadata, stop/remove | `/var/lib/minidocker/containers/` |
 | `network` | Bridge `minidocker0`, veth pairs, container IP allocation | (kernel interfaces) |
 | `log` | Attach stdout/stderr writers per container | same dir as `container` metadata |
 
@@ -106,6 +124,50 @@ sequenceDiagram
   Net->>Net: veth pair + bridge + IP
   Runtime->>Runtime: save config.json
   Runtime-->>User: container ID + pid
+```
+
+### Container lifecycle
+
+Containers move through a small set of states tracked in `config.json`:
+
+```mermaid
+stateDiagram-v2
+  [*] --> running: run (Start + save config)
+  running --> exited: process exits (foreground or detached waiter)
+  running --> stopped: stop (SIGTERM)
+  stopped --> exited: optional relabel on stale metadata
+  exited --> [*]: rm (RemoveAll container dir)
+  stopped --> [*]: rm
+```
+
+| State | Meaning | Allowed next commands |
+|-------|---------|----------------------|
+| `running` | PID alive in namespaces | `logs`, `exec`, `inspect`, `stop` |
+| `stopped` | SIGTERM sent; directory kept | `logs`, `inspect`, `rm` |
+| `exited` | Process finished | `logs`, `inspect`, `rm` |
+
+`container.Runtime.Remove` resolves ID prefixes (same rules as `inspect`), refuses
+containers whose PID still responds to signal `0`, and deletes the entire
+`<id>/` directory—including `config.json`, `stdout.log`, and `stderr.log`.
+
+### Exec flow
+
+`exec` does not start a new container. It re-enters the **existing** process
+namespaces with `nsenter`:
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant CLI
+  participant Runtime as container.Runtime
+  participant Nsenter as nsenter(1)
+
+  User->>CLI: minidocker exec <id> /bin/sh
+  CLI->>Runtime: Exec(id, command)
+  Runtime->>Runtime: ResolveID + load config.json
+  Runtime->>Runtime: verify status=running, kill(pid,0)
+  Runtime->>Nsenter: --target PID --mount --uts --ipc --net --pid -- cmd
+  Nsenter-->>User: attached stdio in container namespaces
 ```
 
 ### On-disk layout
@@ -154,24 +216,28 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
 
 ### Runtime behavior
 
-- **`run` is foreground** — the CLI blocks until the container process exits,
-  then writes `status: exited` to `config.json`.
+- **`run` is foreground by default** — pass `-d` to detach; the CLI returns the
+  container ID immediately and a background goroutine waits for exit.
 - **Shared container directory** — `container.Runtime` and `log.Logger` both
   use `/var/lib/minidocker/containers/`; each run creates
   `<id>/config.json`, `stdout.log`, and `stderr.log` under the same folder.
 - **Best-effort networking** — if veth/bridge setup fails, minidocker prints a
   warning and keeps the container running without external connectivity.
+- **Port publish parsing** — `-p host:container` is validated at the CLI and
+  stored on `RunSpec`; iptables NAT forwarding is not implemented yet.
 - **Offline images** — tests and fixtures load tarballs via
-  `image.Store.InstallFromTar` instead of `Pull`.
+  `image.Store.InstallFromTar` instead of `Pull`; `images` shows `source=local`.
+- **Cleanup** — `rm` removes stopped/exited container directories; running
+  containers must be stopped first.
 
 ### Package map
 
 ```
-cmd/minidocker/     CLI entry point (pull, run, ps, inspect, logs, stop)
+cmd/minidocker/     CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm)
 internal/
-  image/            image store and rootfs extraction
-  container/        namespace setup, process lifecycle, metadata I/O
-  network/          bridge and veth management
+  image/            image store, listing, and rootfs extraction
+  container/        namespace setup, process lifecycle, metadata I/O, removal
+  network/          bridge and veth management, port mapping parse helpers
   log/              stdout/stderr capture
   testutil/         shared helpers for unit and integration tests
 testdata/fixtures/  checked-in rootfs tarball for offline tests

@@ -15,6 +15,13 @@ import (
 
 const DefaultRoot = "/var/lib/minidocker/images"
 
+// ImageInfo describes a locally stored image.
+type ImageInfo struct {
+	Name   string
+	Digest string
+	Source string // empty for pulled images, "local" for InstallFromTar
+}
+
 // Store manages local image storage and retrieval.
 type Store struct {
 	root string
@@ -140,6 +147,35 @@ func (s *Store) InstallFromTar(name, tarPath string) error {
 	return nil
 }
 
+// List returns metadata for every image in the local store.
+func (s *Store) List() ([]ImageInfo, error) {
+	entries, err := os.ReadDir(s.root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var images []ImageInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		metaPath := filepath.Join(s.root, entry.Name(), "meta")
+		data, err := os.ReadFile(metaPath)
+		if err != nil {
+			continue
+		}
+		info := parseMeta(string(data))
+		if info.Name == "" {
+			info.Name = unsanitize(entry.Name())
+		}
+		images = append(images, info)
+	}
+	return images, nil
+}
+
 // RootfsPath returns the path to a pulled image's root filesystem.
 func (s *Store) RootfsPath(name string) (string, error) {
 	rootfs := filepath.Join(s.root, sanitize(name), "rootfs")
@@ -165,6 +201,32 @@ func resolveURL(name string) (string, error) {
 
 func sanitize(name string) string {
 	return strings.ReplaceAll(name, ":", "_")
+}
+
+func unsanitize(dir string) string {
+	if idx := strings.LastIndex(dir, "_"); idx >= 0 {
+		return dir[:idx] + ":" + dir[idx+1:]
+	}
+	return dir
+}
+
+func parseMeta(content string) ImageInfo {
+	var info ImageInfo
+	for _, line := range strings.Split(content, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "name":
+			info.Name = value
+		case "digest":
+			info.Digest = value
+		case "source":
+			info.Source = value
+		}
+	}
+	return info
 }
 
 func extractTarGz(src, dest string) error {

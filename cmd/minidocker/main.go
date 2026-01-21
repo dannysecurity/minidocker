@@ -16,6 +16,7 @@ const usage = `minidocker — a minimal container runtime for learning
 
 Usage:
   minidocker pull <image>              Download and store an image
+  minidocker images                    List locally stored images
   minidocker run [-d] [-p host:container] <image> <cmd...>
                                        Run a command in a new container
   minidocker ps [-a]                   List containers (running by default)
@@ -23,6 +24,7 @@ Usage:
   minidocker logs [--tail N] <id>      Show container logs
   minidocker exec <id> <cmd...>        Run a command in a running container
   minidocker stop <id>                 Stop a running container
+  minidocker rm <id>                   Remove a stopped container
 `
 
 func main() {
@@ -39,6 +41,8 @@ func runCLI(args []string) int {
 	switch args[1] {
 	case "pull":
 		err = cmdPull(args[2:])
+	case "images":
+		err = cmdImages(args[2:])
 	case "run":
 		err = cmdRun(args[2:])
 	case "ps":
@@ -51,6 +55,8 @@ func runCLI(args []string) int {
 		err = cmdExec(args[2:])
 	case "stop":
 		err = cmdStop(args[2:])
+	case "rm":
+		err = cmdRm(args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", args[1], usage)
 		return 1
@@ -69,6 +75,32 @@ func cmdPull(args []string) error {
 	}
 	store := image.NewStore(image.DefaultRoot)
 	return store.Pull(args[0])
+}
+
+func cmdImages(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("usage: minidocker images")
+	}
+
+	store := image.NewStore(image.DefaultRoot)
+	images, err := store.List()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("REPOSITORY  DIGEST  SOURCE")
+	for _, img := range images {
+		source := img.Source
+		if source == "" {
+			source = "pull"
+		}
+		digest := img.Digest
+		if len(digest) > 19 {
+			digest = digest[:19] + "..."
+		}
+		fmt.Printf("%-20s  %-23s  %s\n", img.Name, digest, source)
+	}
+	return nil
 }
 
 func cmdRun(args []string) error {
@@ -233,4 +265,12 @@ func cmdStop(args []string) error {
 		return err
 	}
 	return rt.Stop(id)
+}
+
+func cmdRm(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: minidocker rm <container-id>")
+	}
+	rt := container.NewRuntime(container.DefaultRoot, nil)
+	return rt.Remove(args[0])
 }

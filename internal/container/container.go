@@ -270,6 +270,28 @@ func (r *Runtime) Exec(id string, command []string) error {
 	return nil
 }
 
+// Remove deletes a stopped container's directory and log files.
+func (r *Runtime) Remove(id string) error {
+	resolved, err := r.ResolveID(id)
+	if err != nil {
+		return err
+	}
+
+	info, err := r.loadInfo(filepath.Join(r.root, resolved))
+	if err != nil {
+		return fmt.Errorf("container %q not found", id)
+	}
+	if info.Status == "running" {
+		if info.PID != 0 && syscall.Kill(info.PID, 0) == nil {
+			return fmt.Errorf("container %q is running — stop it first", resolved)
+		}
+		info.Status = "exited"
+		_ = r.saveInfo(filepath.Join(r.root, resolved), info)
+	}
+
+	return os.RemoveAll(filepath.Join(r.root, resolved))
+}
+
 // Stop sends SIGTERM to a running container.
 func (r *Runtime) Stop(id string) error {
 	info, err := r.loadInfo(filepath.Join(r.root, id))
