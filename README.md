@@ -291,7 +291,9 @@ fixture image and require root:
 sudo go test -tags=integration ./...
 ```
 
-Regenerate the fixture tarball after changing the embedded echo helper:
+The `internal/integrationtest` package provides `NewEnv` to install the tiny fixture
+image and wire a temp runtime for integration tests. Regenerate the fixture tarball after
+changing embedded helpers (`echo`, `readhostname`, `sleep`):
 
 ```bash
 ./scripts/build-test-fixture.sh
