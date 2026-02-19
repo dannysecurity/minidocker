@@ -155,3 +155,31 @@ func TestWrapperResolveInitPathMissing(t *testing.T) {
 		t.Fatal("expected error when init binary is missing")
 	}
 }
+
+func TestWrapperResolveInitPathFromEnv(t *testing.T) {
+	initPath := filepath.Join(t.TempDir(), initBinaryName)
+	if err := os.WriteFile(initPath, []byte{0x7f, 'E', 'L', 'F'}, 0755); err != nil {
+		t.Fatalf("write fake init: %v", err)
+	}
+
+	t.Setenv("MINIDOCKER_INIT", initPath)
+	got, err := (&Wrapper{}).resolveInitPath()
+	if err != nil {
+		t.Fatalf("resolveInitPath: %v", err)
+	}
+	if got != initPath {
+		t.Fatalf("resolveInitPath() = %q, want %q", got, initPath)
+	}
+}
+
+func TestWrapperResolveInitPathNotExecutable(t *testing.T) {
+	initPath := filepath.Join(t.TempDir(), initBinaryName)
+	if err := os.WriteFile(initPath, []byte{0x7f, 'E', 'L', 'F'}, 0644); err != nil {
+		t.Fatalf("write fake init: %v", err)
+	}
+
+	w := &Wrapper{InitPath: initPath}
+	if _, err := w.resolveInitPath(); err == nil {
+		t.Fatal("expected error when init binary is not executable")
+	}
+}

@@ -54,10 +54,10 @@ func (w *Wrapper) Command(cfg Config) (*exec.Cmd, error) {
 
 func (w *Wrapper) resolveInitPath() (string, error) {
 	if w.InitPath != "" {
-		return w.InitPath, nil
+		return w.InitPath, verifyInitBinary(w.InitPath)
 	}
 	if p := os.Getenv("MINIDOCKER_INIT"); p != "" {
-		return p, nil
+		return p, verifyInitBinary(p)
 	}
 
 	exe, err := os.Executable()
@@ -65,9 +65,23 @@ func (w *Wrapper) resolveInitPath() (string, error) {
 		return "", fmt.Errorf("resolve init binary: %w", err)
 	}
 	candidate := filepath.Join(filepath.Dir(exe), initBinaryName)
-	if _, err := os.Stat(candidate); err == nil {
+	if err := verifyInitBinary(candidate); err == nil {
 		return candidate, nil
 	}
 
 	return "", fmt.Errorf("resolve init binary: %q not found (build with: go build -o %s ./cmd/container-init)", candidate, initBinaryName)
+}
+
+func verifyInitBinary(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("resolve init binary: %w", err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("resolve init binary: %q is a directory", path)
+	}
+	if info.Mode()&0111 == 0 {
+		return fmt.Errorf("resolve init binary: %q is not executable", path)
+	}
+	return nil
 }
