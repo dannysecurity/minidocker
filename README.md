@@ -52,9 +52,11 @@ sudo ./minidocker rm <container-id>
 
 ## Architecture
 
-minidocker is a single-binary CLI that wires together four internal packages. The CLI
-parses commands and delegates to package APIs; it does not implement container logic
-itself.
+minidocker is a single-binary, stateless CLI that wires together five core internal
+packages. Each invocation constructs fresh `image.Store`, `container.Runtime`, and
+`log.Logger` instances rooted at `/var/lib/minidocker/`; there is no long-lived daemon.
+The CLI parses commands and delegates to package APIs — it does not implement container
+logic itself.
 
 ### Component overview
 
@@ -102,6 +104,62 @@ flowchart TB
 | `isolation` | Namespace flags, `container-init` wrapper, hostname and mount setup | (in-memory / child process) |
 | `network` | Bridge `minidocker0`, veth pairs, container IP allocation, iptables port forwarding | (kernel interfaces) |
 | `log` | Attach stdout/stderr writers per container | same dir as `container` metadata |
+
+### Package dependencies
+
+Import direction is strict: only `cmd/minidocker` and test helpers reach into
+`internal/`. Production packages never import each other in a cycle — `container` sits
+at the center and orchestrates `isolation`, `network`, and `log`.
+
+```mermaid
+flowchart BT
+  CLI["cmd/minidocker"]
+  init["cmd/container-init"]
+  container["container"]
+  image["image"]
+  isolation["isolation"]
+  network["network"]
+  log["log"]
+
+  CLI --> container
+  CLI --> image
+  CLI --> log
+  CLI --> network
+  container --> isolation
+  container --> network
+  container --> log
+```
+
+| Package | May import | Must not import |
+|---------|------------|-----------------|
+| `image` | stdlib only | any `internal/*` |
+| `isolation` | stdlib only | any `internal/*` |
+| `network` | stdlib only | any `internal/*` |
+| `log` | stdlib only | any `internal/*` |
+| `container` | `isolation`, `network`, `log` | `image` (rootfs path passed in via `RunSpec`) |
+
+`cmd/container-init` is a separate binary with no `internal/` imports; it only uses
+the Go standard library and environment variables set by `isolation.Wrapper`.
+
+### Identifiers and addressing
+
+Container IDs are 12 lowercase hex characters derived from `UnixNano()` at creation
+time (`generateID` in `container`). Commands accept ID prefixes: `ResolveID` scans
+`containers/` and requires a unique match, otherwise returns an ambiguity error.
+
+Bridge IPs are deterministic from the container ID — the sum of ID bytes selects
+`172.17.0.<2–251>` (`network.Manager.allocateIP`). Host veth interfaces are named
+`veth` + the first 8 ID characters.
+
+### Host tools
+
+Networking and exec delegate to standard Linux utilities rather than netlink or cgo:
+
+| Tool | Used for |
+|------|----------|
+| `ip` (iproute2) | Bridge `minidocker0`, veth pairs, addresses, routes |
+| `iptables` | Outbound MASQUERADE, `-p` DNAT/FORWARD rules |
+| `nsenter` (util-linux) | `exec` namespace attach; in-namespace `ip` during setup |
 
 ### Pull → run flow
 
