@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dannysecurity/minidocker/internal/network"
 )
 
 func writeContainerConfig(t *testing.T, root, id string, info Info) {
@@ -37,6 +40,10 @@ func TestInspect(t *testing.T) {
 		Status:  "exited",
 		PID:     4242,
 		Created: time.Date(2026, 1, 20, 10, 0, 0, 0, time.UTC),
+		IP:      "172.17.0.42",
+		PortMappings: []network.PortMapping{
+			{HostPort: 8080, ContainerPort: 80},
+		},
 	}
 	writeContainerConfig(t, root, want.ID, want)
 
@@ -44,7 +51,7 @@ func TestInspect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Inspect() = %+v, want %+v", got, want)
 	}
 }

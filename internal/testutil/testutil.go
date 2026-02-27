@@ -15,6 +15,16 @@ func RequireRoot(t *testing.T) {
 	}
 }
 
+// RequireNetworkTools skips the test when ip or iptables are unavailable.
+func RequireNetworkTools(t *testing.T) {
+	t.Helper()
+	for _, bin := range []string{"ip", "iptables"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("requires %q in PATH", bin)
+		}
+	}
+}
+
 // ModuleRoot returns the absolute path to the module root (directory containing go.mod).
 func ModuleRoot(t *testing.T) string {
 	t.Helper()

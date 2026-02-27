@@ -126,6 +126,10 @@ func cmdRun(args []string) error {
 		}
 	}
 
+	if err := network.ValidatePortMappings(portMappings); err != nil {
+		return err
+	}
+
 	if len(positional) < 2 {
 		return fmt.Errorf("usage: minidocker run [-d] [-p host:container] <image> <command...>")
 	}
@@ -175,13 +179,14 @@ func cmdPs(args []string) error {
 	}
 
 	if !quiet {
-		fmt.Println("CONTAINER ID  IMAGE  STATUS  COMMAND")
+		fmt.Println("CONTAINER ID  IMAGE  STATUS  PORTS  COMMAND")
 	}
 	for _, c := range containers {
 		if quiet {
 			fmt.Println(c.ID)
 		} else {
-			fmt.Printf("%-12s  %-20s  %-8s  %s\n", c.ID, c.Image, c.Status, c.Command)
+			ports := network.FormatPorts(c.PortMappings)
+			fmt.Printf("%-12s  %-20s  %-8s  %-20s  %s\n", c.ID, c.Image, c.Status, ports, c.Command)
 		}
 	}
 	return nil

@@ -20,32 +20,33 @@ func NewManager(bridge string) *Manager {
 }
 
 // Setup creates a veth pair and attaches it to the bridge for a container.
-func (m *Manager) Setup(containerID string, pid int) error {
+// It returns the allocated container IP address.
+func (m *Manager) Setup(containerID string, pid int) (string, error) {
 	if err := m.ensureBridge(); err != nil {
-		return fmt.Errorf("ensure bridge: %w", err)
+		return "", fmt.Errorf("ensure bridge: %w", err)
 	}
 
-	hostVeth := fmt.Sprintf("veth%s", containerID[:8])
+	hostVeth := hostVethName(containerID)
 	containerVeth := "eth0"
 
 	if err := run("ip", "link", "add", hostVeth, "type", "veth", "peer", "name", containerVeth); err != nil {
-		return fmt.Errorf("create veth: %w", err)
+		return "", fmt.Errorf("create veth: %w", err)
 	}
 
 	nsPath := filepath.Join("/proc", fmt.Sprintf("%d", pid), "ns", "net")
 	if err := run("ip", "link", "set", containerVeth, "netns", nsPath); err != nil {
 		_ = run("ip", "link", "del", hostVeth)
-		return fmt.Errorf("move veth to namespace: %w", err)
+		return "", fmt.Errorf("move veth to namespace: %w", err)
 	}
 
 	if err := run("ip", "link", "set", hostVeth, "master", m.bridge); err != nil {
-		return fmt.Errorf("attach to bridge: %w", err)
+		return "", fmt.Errorf("attach to bridge: %w", err)
 	}
 	if err := run("ip", "link", "set", hostVeth, "up"); err != nil {
-		return fmt.Errorf("bring up host veth: %w", err)
+		return "", fmt.Errorf("bring up host veth: %w", err)
 	}
 
-	containerIP := m.allocateIP(containerID)
+	containerIP := m.ContainerIP(containerID)
 	commands := [][]string{
 		{"ip", "link", "set", "lo", "up"},
 		{"ip", "link", "set", containerVeth, "up"},
@@ -54,11 +55,26 @@ func (m *Manager) Setup(containerID string, pid int) error {
 	}
 	for _, args := range commands {
 		if err := runInNetNS(nsPath, args...); err != nil {
-			return fmt.Errorf("configure container net: %w", err)
+			return "", fmt.Errorf("configure container net: %w", err)
 		}
 	}
 
-	return nil
+	return containerIP, nil
+}
+
+// Teardown removes the host-side veth and any port-mapping iptables rules.
+func (m *Manager) Teardown(containerID, containerIP string, mappings []PortMapping) {
+	_ = m.RemovePortMappings(containerIP, mappings)
+	_ = run("ip", "link", "del", hostVethName(containerID))
+}
+
+// ContainerIP returns the deterministic bridge IP assigned to a container ID.
+func (m *Manager) ContainerIP(containerID string) string {
+	return m.allocateIP(containerID)
+}
+
+func hostVethName(containerID string) string {
+	return fmt.Sprintf("veth%s", containerID[:8])
 }
 
 func (m *Manager) ensureBridge() error {

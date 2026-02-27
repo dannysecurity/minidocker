@@ -30,12 +30,14 @@ type RunSpec struct {
 
 // Info holds metadata about a running or stopped container.
 type Info struct {
-	ID      string `json:"id"`
-	Image   string `json:"image"`
-	Command string `json:"command"`
-	Status  string `json:"status"`
-	PID     int    `json:"pid"`
-	Created time.Time `json:"created"`
+	ID           string                 `json:"id"`
+	Image        string                 `json:"image"`
+	Command      string                 `json:"command"`
+	Status       string                 `json:"status"`
+	PID          int                    `json:"pid"`
+	Created      time.Time              `json:"created"`
+	IP           string                 `json:"ip,omitempty"`
+	PortMappings []network.PortMapping  `json:"port_mappings,omitempty"`
 }
 
 // Runtime manages container lifecycle.
@@ -80,17 +82,26 @@ func (r *Runtime) Run(spec RunSpec) (string, error) {
 
 	containerDir := filepath.Join(r.root, id)
 	info := Info{
-		ID:      id,
-		Image:   spec.Image,
-		Command: strings.Join(spec.Command, " "),
-		Status:  "running",
-		PID:     cmd.Process.Pid,
-		Created: time.Now(),
+		ID:           id,
+		Image:        spec.Image,
+		Command:      strings.Join(spec.Command, " "),
+		Status:       "running",
+		PID:          cmd.Process.Pid,
+		Created:      time.Now(),
+		PortMappings: spec.PortMappings,
 	}
 
 	netMgr := network.NewManager(network.DefaultBridge)
-	if err := netMgr.Setup(id, info.PID); err != nil {
+	containerIP, err := netMgr.Setup(id, info.PID)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: network setup failed: %v\n", err)
+	} else {
+		info.IP = containerIP
+		if len(spec.PortMappings) > 0 {
+			if err := netMgr.ApplyPortMappings(containerIP, spec.PortMappings); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: port mapping failed: %v\n", err)
+			}
+		}
 	}
 
 	if err := r.saveInfo(containerDir, info); err != nil {
@@ -300,6 +311,13 @@ func (r *Runtime) Remove(id string) error {
 		info.Status = "exited"
 		_ = r.saveInfo(filepath.Join(r.root, resolved), info)
 	}
+
+	netMgr := network.NewManager(network.DefaultBridge)
+	containerIP := info.IP
+	if containerIP == "" {
+		containerIP = netMgr.ContainerIP(resolved)
+	}
+	netMgr.Teardown(resolved, containerIP, info.PortMappings)
 
 	return os.RemoveAll(filepath.Join(r.root, resolved))
 }

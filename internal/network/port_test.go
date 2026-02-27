@@ -71,3 +71,74 @@ func TestParsePortMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestValidatePortMappings(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   []PortMapping
+		wantErr bool
+	}{
+		{
+			name: "unique host ports",
+			input: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80},
+				{HostPort: 8443, ContainerPort: 443},
+			},
+		},
+		{
+			name: "duplicate host port",
+			input: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80},
+				{HostPort: 8080, ContainerPort: 8080},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidatePortMappings(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidatePortMappings: %v", err)
+			}
+		})
+	}
+}
+
+func TestFormatPorts(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []PortMapping
+		want  string
+	}{
+		{name: "empty", input: nil, want: ""},
+		{
+			name:  "single",
+			input: []PortMapping{{HostPort: 8080, ContainerPort: 80}},
+			want:  "8080->80/tcp",
+		},
+		{
+			name: "multiple",
+			input: []PortMapping{
+				{HostPort: 8080, ContainerPort: 80},
+				{HostPort: 8443, ContainerPort: 443},
+			},
+			want: "8080->80/tcp, 8443->443/tcp",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatPorts(tc.input)
+			if got != tc.want {
+				t.Fatalf("FormatPorts() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

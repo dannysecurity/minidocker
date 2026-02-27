@@ -8,8 +8,32 @@ import (
 
 // PortMapping describes a host port forwarded to a container port.
 type PortMapping struct {
-	HostPort      int
-	ContainerPort int
+	HostPort      int `json:"host_port"`
+	ContainerPort int `json:"container_port"`
+}
+
+// ValidatePortMappings checks for duplicate host ports in a publish list.
+func ValidatePortMappings(mappings []PortMapping) error {
+	seen := make(map[int]struct{}, len(mappings))
+	for _, mapping := range mappings {
+		if _, ok := seen[mapping.HostPort]; ok {
+			return fmt.Errorf("duplicate host port %d", mapping.HostPort)
+		}
+		seen[mapping.HostPort] = struct{}{}
+	}
+	return nil
+}
+
+// FormatPorts renders mappings for ps-style output (e.g. "8080->80/tcp").
+func FormatPorts(mappings []PortMapping) string {
+	if len(mappings) == 0 {
+		return ""
+	}
+	parts := make([]string, len(mappings))
+	for i, mapping := range mappings {
+		parts[i] = fmt.Sprintf("%d->%d/tcp", mapping.HostPort, mapping.ContainerPort)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ParsePortMapping parses a Docker-style publish spec "hostPort:containerPort".

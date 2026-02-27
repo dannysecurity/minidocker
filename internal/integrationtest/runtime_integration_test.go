@@ -4,13 +4,16 @@ package integrationtest
 
 import (
 	"bytes"
+	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dannysecurity/minidocker/internal/container"
+	"github.com/dannysecurity/minidocker/internal/network"
 	"github.com/dannysecurity/minidocker/internal/testutil"
 )
 
@@ -197,6 +200,68 @@ func TestIntegration_StopLongRunningFixture(t *testing.T) {
 	}
 
 	EnsureContainerDead(t, env.Runtime, id)
+}
+
+func TestIntegration_PortMappingForwardsTCP(t *testing.T) {
+	testutil.RequireRoot(t)
+	testutil.RequireNetworkTools(t)
+	env := NewEnv(t)
+
+	hostPort := 40000 + (os.Getpid() % 20000)
+	containerPort := 9000
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/tcpecho", fmt.Sprintf("%d", containerPort)},
+		Detach:  true,
+		PortMappings: []network.PortMapping{
+			{HostPort: hostPort, ContainerPort: containerPort},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	t.Cleanup(func() { EnsureContainerDead(t, env.Runtime, id) })
+
+	WaitForStatus(t, env.Runtime, id, "running", 5*time.Second)
+
+	info, err := env.Runtime.Inspect(id)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if info.IP == "" {
+		t.Fatal("Inspect().IP is empty")
+	}
+	if len(info.PortMappings) != 1 {
+		t.Fatalf("Inspect().PortMappings = %+v, want one mapping", info.PortMappings)
+	}
+	if info.PortMappings[0].HostPort != hostPort {
+		t.Fatalf("host port = %d, want %d", info.PortMappings[0].HostPort, hostPort)
+	}
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", hostPort), 2*time.Second)
+	if err != nil {
+		t.Fatalf("Dial host port: %v", err)
+	}
+	defer conn.Close()
+
+	msg := "port-mapping-ok"
+	if _, err := conn.Write([]byte(msg)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("Read echo: %v", err)
+	}
+	if string(buf) != msg {
+		t.Fatalf("echo = %q, want %q", buf, msg)
+	}
+
+	if err := env.Runtime.Remove(id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
 }
 
 func TestIntegration_ExecIntoRunningFixture(t *testing.T) {

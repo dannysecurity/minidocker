@@ -36,7 +36,7 @@ sudo ./minidocker images
 # Run an interactive shell
 sudo ./minidocker run busybox:latest /bin/sh
 
-# Run detached and publish a port (parsed at CLI; NAT forwarding not yet wired)
+# Run detached and publish a port (host traffic forwarded via iptables DNAT)
 sudo ./minidocker run -d -p 8080:80 busybox:latest /bin/httpd -f
 
 # View logs from a detached container
@@ -76,7 +76,7 @@ flowchart TB
     image["image.Store\npull, list, unpack, rootfs lookup"]
     container["container.Runtime\nlifecycle, metadata, rm"]
     isolation["isolation.Wrapper\nnamespaces, init, rootfs prep"]
-    network["network.Manager\nbridge + veth"]
+    network["network.Manager\nbridge + veth + port NAT"]
     log["log.Logger\nstdout/stderr capture"]
   end
 
@@ -100,7 +100,7 @@ flowchart TB
 | `image` | Download tarballs, verify SHA-256, extract rootfs, list stored images | `/var/lib/minidocker/images/` |
 | `container` | Persist metadata, stop/remove containers, orchestrate run lifecycle | `/var/lib/minidocker/containers/` |
 | `isolation` | Namespace flags, `container-init` wrapper, hostname and mount setup | (in-memory / child process) |
-| `network` | Bridge `minidocker0`, veth pairs, container IP allocation | (kernel interfaces) |
+| `network` | Bridge `minidocker0`, veth pairs, container IP allocation, iptables port forwarding | (kernel interfaces) |
 | `log` | Attach stdout/stderr writers per container | same dir as `container` metadata |
 
 ### Pull → run flow
@@ -126,6 +126,10 @@ sequenceDiagram
   Runtime->>Runtime: container-init sets hostname, mounts proc, chroot
   Runtime->>Net: Setup(id, pid)
   Net->>Net: veth pair + bridge + IP
+  alt -p host:container
+    Runtime->>Net: ApplyPortMappings(ip, mappings)
+    Net->>Net: iptables DNAT + FORWARD
+  end
   Runtime->>Runtime: save config.json
   Runtime-->>User: container ID + pid
 ```
@@ -189,7 +193,7 @@ After pulling `busybox:latest` and running one container, state looks like this:
 │           └── ...
 └── containers/
     └── <12-char-id>/
-        ├── config.json          # id, image, command, status, pid, created
+        ├── config.json          # id, image, command, status, pid, ip, port_mappings, created
         ├── stdout.log           # captured stdout (when logger attached)
         └── stderr.log           # captured stderr
 ```
@@ -232,6 +236,13 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
 `ip link set … netns /proc/<pid>/ns/net`. The host bridge `minidocker0` uses
 `172.17.0.1/16`; each container receives `172.17.0.<n>/24` derived from its ID.
 
+**Port publishing** (`-p host:container`) installs iptables DNAT rules on
+`PREROUTING` and `OUTPUT`, plus a `FORWARD` accept rule, so traffic to the host
+port reaches the container's bridge IP. Outbound container traffic is NATed via
+a one-time `MASQUERADE` rule on the bridge subnet. Port mappings and the
+assigned IP are persisted in `config.json` and removed when the container is
+deleted with `rm`.
+
 ### Runtime behavior
 
 - **`run` is foreground by default** — pass `-d` to detach; the CLI returns the
@@ -241,8 +252,9 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
   `<id>/config.json`, `stdout.log`, and `stderr.log` under the same folder.
 - **Best-effort networking** — if veth/bridge setup fails, minidocker prints a
   warning and keeps the container running without external connectivity.
-- **Port publish parsing** — `-p host:container` is validated at the CLI and
-  stored on `RunSpec`; iptables NAT forwarding is not implemented yet.
+- **Port publish** — `-p host:container` validates at the CLI, installs iptables
+  DNAT/FORWARD rules after network setup, and persists mappings in
+  `config.json`; `ps` shows a `PORTS` column.
 - **Offline images** — tests and fixtures load tarballs via
   `image.Store.InstallFromTar` instead of `Pull`; `images` shows `source=local`.
 - **Cleanup** — `rm` removes stopped/exited container directories; running
@@ -257,7 +269,7 @@ internal/
   image/              image store, listing, and rootfs extraction
   isolation/          namespace wrapper, clone flags, rootfs preparation
   container/          process lifecycle, metadata I/O, removal
-  network/            bridge and veth management, port mapping parse helpers
+  network/            bridge and veth management, iptables port forwarding
   log/                stdout/stderr capture
   testutil/           shared helpers for unit and integration tests
 testdata/fixtures/    checked-in rootfs tarball for offline tests
@@ -271,7 +283,8 @@ testdata/fixtures/    checked-in rootfs tarball for offline tests
    namespace flags. The init process sets the hostname, chroots into the image
    rootfs, mounts `/proc`, and execs the requested command.
 3. **Network** creates a veth pair, moves one end into the container namespace,
-   and attaches the host end to the `minidocker0` bridge (no NAT/iptables yet).
+   attaches the host end to the `minidocker0` bridge, and optionally installs
+   iptables DNAT rules for `-p` port mappings.
 4. **Logs** redirect the container's stdout/stderr through a pipe to a log file
    under `/var/lib/minidocker/containers/<id>/`.
 
@@ -293,7 +306,7 @@ sudo go test -tags=integration ./...
 
 The `internal/integrationtest` package provides `NewEnv` to install the tiny fixture
 image and wire a temp runtime for integration tests. Regenerate the fixture tarball after
-changing embedded helpers (`echo`, `readhostname`, `sleep`):
+changing embedded helpers (`echo`, `readhostname`, `sleep`, `tcpecho`):
 
 ```bash
 ./scripts/build-test-fixture.sh

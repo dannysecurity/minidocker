@@ -75,8 +75,45 @@ EOF
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
   -o "${rootfs}/bin/sleep" "${build_dir}/sleep.go"
+
+cat > "${build_dir}/tcpecho.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"io"
+	"net"
+	"os"
+)
+
+func main() {
+	port := "9000"
+	if len(os.Args) > 1 {
+		port = os.Args[1]
+	}
+	ln, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer ln.Close()
+	conn, err := ln.Accept()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+	if _, err := io.Copy(conn, conn); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+EOF
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
+  -o "${rootfs}/bin/tcpecho" "${build_dir}/tcpecho.go"
 echo "tiny-fixture" > "${rootfs}/etc/hostname"
-chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep"
+chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep" "${rootfs}/bin/tcpecho"
 
 mkdir -p "${fixture_dir}"
 tar -C "${rootfs}" -czf "${fixture_dir}/tiny-rootfs.tar.gz" bin etc proc dev tmp
