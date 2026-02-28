@@ -64,6 +64,7 @@ func TestParseManifestRejectsInvalid(t *testing.T) {
 		{name: "wrong schema", data: `{"schemaVersion":1,"config":{"digest":"sha256:x"},"layers":[{"digest":"sha256:y"}]}`},
 		{name: "no layers", data: `{"schemaVersion":2,"config":{"digest":"sha256:x"},"layers":[]}`},
 		{name: "missing config", data: `{"schemaVersion":2,"layers":[{"digest":"sha256:y"}]}`},
+		{name: "empty layer digest", data: `{"schemaVersion":2,"config":{"digest":"sha256:x"},"layers":[{"digest":""}]}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,6 +91,24 @@ func TestParseIndex(t *testing.T) {
 	}
 	if index.Manifests[0].Digest != "sha256:manifest" {
 		t.Fatalf("digest = %q", index.Manifests[0].Digest)
+	}
+}
+
+func TestParseIndexRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{name: "wrong schema", data: `{"schemaVersion":1,"manifests":[{"digest":"sha256:x"}]}`},
+		{name: "no manifests", data: `{"schemaVersion":2,"manifests":[]}`},
+		{name: "empty manifest digest", data: `{"schemaVersion":2,"manifests":[{"digest":""}]}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseIndex([]byte(tc.data)); err == nil {
+				t.Fatal("expected error")
+			}
+		})
 	}
 }
 

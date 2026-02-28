@@ -50,6 +50,11 @@ func ParseManifest(data []byte) (*Manifest, error) {
 	if manifest.Config.Digest == "" {
 		return nil, fmt.Errorf("manifest missing config descriptor")
 	}
+	for i, layer := range manifest.Layers {
+		if layer.Digest == "" {
+			return nil, fmt.Errorf("manifest layer %d missing digest", i)
+		}
+	}
 	return &manifest, nil
 }
 
@@ -64,6 +69,11 @@ func ParseIndex(data []byte) (*Index, error) {
 	}
 	if len(index.Manifests) == 0 {
 		return nil, fmt.Errorf("index has no manifests")
+	}
+	for i, desc := range index.Manifests {
+		if desc.Digest == "" {
+			return nil, fmt.Errorf("index manifest %d missing digest", i)
+		}
 	}
 	return &index, nil
 }
