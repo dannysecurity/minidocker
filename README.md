@@ -8,7 +8,7 @@ networking, and streaming container logs.
 
 ## Features
 
-- **Images** — fetch, unpack, and store OCI-style root filesystems locally; list with `images`, remove with `rmi`
+- **Images** — fetch, unpack, and store OCI-style root filesystems locally; list with `images`, inspect layer metadata with `inspect-image`, remove with `rmi`
 - **Run** — start processes inside new PID, mount, UTS, IPC, and network namespaces
 - **Logs** — capture stdout/stderr from running containers
 - **Networking** — create veth pairs and assign IP addresses on a bridge
@@ -32,6 +32,9 @@ sudo ./minidocker pull busybox:latest
 
 # List images stored locally
 sudo ./minidocker images
+
+# Inspect image metadata (digest, source, layers, rootfs size)
+sudo ./minidocker inspect-image busybox:latest
 
 # Run an interactive shell
 sudo ./minidocker run busybox:latest /bin/sh
@@ -68,6 +71,7 @@ flowchart TB
   subgraph CLI["cmd/minidocker"]
     pull[pull]
     images[images]
+    inspectImage[inspect-image]
     run[run]
     ps[ps]
     inspect[inspect]
@@ -88,6 +92,7 @@ flowchart TB
 
   pull --> image
   images --> image
+  inspectImage --> image
   run --> image
   run --> container
   run --> log
@@ -244,6 +249,70 @@ stateDiagram-v2
 removal until `rm` deletes its directory. Re-pulling an existing name
 overwrites the previous rootfs in place.
 
+### Image store architecture
+
+The `image` package owns everything under `/var/lib/minidocker/images/`. Images
+reach the store through three paths; all converge on the same on-disk shape
+(`meta` + `rootfs/`):
+
+```mermaid
+flowchart LR
+  subgraph ingest["Ingestion paths"]
+    pull["Pull(name)\nHTTP tarball → extractTarGz"]
+    tar["InstallFromTar(name, path)\nlocal .tar.gz for tests/fixtures"]
+    oci["InstallFromOCI(name, layout)\nOCI image layout + layer stack"]
+  end
+
+  subgraph store["On-disk image dir"]
+    meta["meta\nname, digest, source, layers"]
+    manifest["manifest.json\n(oci source only)"]
+    rootfs["rootfs/\nmerged container filesystem"]
+  end
+
+  pull --> meta
+  pull --> rootfs
+  tar --> meta
+  tar --> rootfs
+  oci --> meta
+  oci --> manifest
+  oci --> rootfs
+```
+
+| Source (`meta`) | How it arrives | Layer metadata | `manifest.json` |
+|-----------------|----------------|----------------|-----------------|
+| *(empty)* / `pull` | `minidocker pull` downloads a known demo tarball | single implicit layer | no |
+| `local` | `InstallFromTar` (tests, offline fixtures) | none recorded | no |
+| `oci` | `InstallFromOCI` reads `index.json` + blobs | comma-separated digests in `meta`; full descriptors in `manifest.json` | yes |
+
+**Pull** maps a handful of demo names (`busybox:latest`, `alpine:latest`,
+`demo:latest`) to public rootfs tarballs, verifies SHA-256 while downloading,
+and extracts with `extractTarGz` (gzip or plain tar). **InstallFromTar** is the
+offline equivalent used by integration tests with
+`testdata/fixtures/tiny-rootfs.tar.gz`. **InstallFromOCI** follows the
+[OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md):
+read `index.json`, resolve the first manifest blob, apply each layer in order
+with `ExtractLayers`, and persist a copy of the manifest beside the rootfs.
+
+Layer application (`internal/image/layer.go`) mirrors Docker overlay semantics:
+entries named `.wh.<file>` delete paths from lower layers, and opaque directory
+markers (`.wh..wh..`) are skipped. This lets stacked OCI layers remove files
+introduced by earlier layers.
+
+Use **`inspect-image`** to dump the merged view without running a container:
+
+```bash
+sudo ./minidocker inspect-image busybox:latest
+```
+
+Example JSON fields:
+
+| Field | Meaning |
+|-------|---------|
+| `Name`, `Digest`, `Source` | Parsed from `meta` |
+| `Layers` | Layer digests (from `meta` or parsed `manifest.json`) |
+| `layer_count` | Number of OCI layers (0 for single-tar pulls) |
+| `rootfs_size_bytes` | Total size of regular files under `rootfs/` |
+
 ### Exec flow
 
 `exec` does not start a new container. It re-enters the **existing** process
@@ -272,7 +341,8 @@ After pulling `busybox:latest` and running one container, state looks like this:
 /var/lib/minidocker/
 ├── images/
 │   └── busybox_latest/
-│       ├── meta                 # name, digest, optional source=local
+│       ├── meta                 # name, digest, optional source=local|oci, layers=
+│       ├── manifest.json        # present for OCI-loaded images (layer descriptors)
 │       └── rootfs/              # unpacked container filesystem
 │           ├── bin/
 │           ├── etc/
@@ -354,7 +424,7 @@ deleted with `rm`.
 ### Package map
 
 ```
-cmd/minidocker/       CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm, rmi)
+cmd/minidocker/       CLI entry point (pull, images, inspect-image, run, ps, inspect, logs, exec, stop, rm, rmi)
 cmd/container-init/   PID 1 helper that prepares rootfs and execs the workload
 internal/
   image/              image store, listing, and rootfs extraction

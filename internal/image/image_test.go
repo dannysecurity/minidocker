@@ -42,6 +42,62 @@ func TestInstallFromTar(t *testing.T) {
 	}
 }
 
+func TestInspectFromTar(t *testing.T) {
+	store := NewStore(t.TempDir())
+	fixture := testutil.FixturePath(t, "tiny-rootfs.tar.gz")
+
+	if err := store.InstallFromTar("tiny:latest", fixture); err != nil {
+		t.Fatalf("InstallFromTar: %v", err)
+	}
+
+	details, err := store.Inspect("tiny:latest")
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if details.Name != "tiny:latest" {
+		t.Fatalf("Name = %q, want tiny:latest", details.Name)
+	}
+	if details.Source != "local" {
+		t.Fatalf("Source = %q, want local", details.Source)
+	}
+	if details.LayerCount != 0 {
+		t.Fatalf("LayerCount = %d, want 0 for single-tar images", details.LayerCount)
+	}
+	if details.RootfsSizeBytes <= 0 {
+		t.Fatalf("RootfsSizeBytes = %d, want positive", details.RootfsSizeBytes)
+	}
+}
+
+func TestInspectNotFound(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	_, err := store.Inspect("missing:latest")
+	if err == nil {
+		t.Fatal("expected error for missing image")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error = %q, want not found", err)
+	}
+}
+
+func TestRootfsSizeBytes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bin", "echo"), []byte("hello"), 0755); err != nil {
+		t.Fatalf("write echo: %v", err)
+	}
+
+	size, err := rootfsSizeBytes(root)
+	if err != nil {
+		t.Fatalf("rootfsSizeBytes: %v", err)
+	}
+	if size != 5 {
+		t.Fatalf("rootfsSizeBytes = %d, want 5", size)
+	}
+}
+
 func TestRemove(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

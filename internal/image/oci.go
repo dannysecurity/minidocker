@@ -13,7 +13,8 @@ import (
 // ImageDetails describes a locally stored image including parsed layer metadata.
 type ImageDetails struct {
 	ImageInfo
-	LayerCount int
+	LayerCount      int   `json:"layer_count"`
+	RootfsSizeBytes int64 `json:"rootfs_size_bytes,omitempty"`
 }
 
 // InstallFromOCI loads an image from an OCI image layout directory.
@@ -138,5 +139,24 @@ func (s *Store) Inspect(name string) (*ImageDetails, error) {
 		}
 	}
 
+	if size, err := rootfsSizeBytes(rootfs); err == nil {
+		details.RootfsSizeBytes = size
+	}
+
 	return details, nil
+}
+
+// rootfsSizeBytes returns the total size of regular files under rootfs.
+func rootfsSizeBytes(rootfs string) (int64, error) {
+	var size int64
+	err := filepath.Walk(rootfs, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size, err
 }

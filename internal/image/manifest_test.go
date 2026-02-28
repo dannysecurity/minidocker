@@ -194,6 +194,9 @@ func TestInstallFromOCI(t *testing.T) {
 	if len(details.Layers) != 1 {
 		t.Fatalf("Layers = %v, want 1 entry", details.Layers)
 	}
+	if details.RootfsSizeBytes <= 0 {
+		t.Fatalf("RootfsSizeBytes = %d, want positive", details.RootfsSizeBytes)
+	}
 }
 
 func buildTestOCILayout(t *testing.T) string {
