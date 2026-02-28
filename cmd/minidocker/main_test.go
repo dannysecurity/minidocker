@@ -168,6 +168,16 @@ func TestCmdImagesEmpty(t *testing.T) {
 	}
 }
 
+func TestCmdInspectImageUsageValidation(t *testing.T) {
+	err := cmdInspectImage(nil)
+	if err == nil {
+		t.Fatal("expected error for missing image")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Fatalf("error = %q, want usage message", err)
+	}
+}
+
 func TestCmdRmiUsageValidation(t *testing.T) {
 	err := cmdRmi(nil)
 	if err == nil {

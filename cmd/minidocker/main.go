@@ -17,6 +17,7 @@ const usage = `minidocker — a minimal container runtime for learning
 Usage:
   minidocker pull <image>              Download and store an image
   minidocker images                    List locally stored images
+  minidocker inspect-image <image>     Show image manifest and layer metadata
   minidocker run [-d] [-p host:container] <image> <cmd...>
                                        Run a command in a new container
   minidocker ps [-a] [-q]              List containers (running by default)
@@ -44,6 +45,8 @@ func runCLI(args []string) int {
 		err = cmdPull(args[2:])
 	case "images":
 		err = cmdImages(args[2:])
+	case "inspect-image":
+		err = cmdInspectImage(args[2:])
 	case "run":
 		err = cmdRun(args[2:])
 	case "ps":
@@ -103,6 +106,25 @@ func cmdImages(args []string) error {
 		}
 		fmt.Printf("%-20s  %-23s  %s\n", img.Name, digest, source)
 	}
+	return nil
+}
+
+func cmdInspectImage(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: minidocker inspect-image <image>")
+	}
+
+	store := image.NewStore(image.DefaultRoot)
+	details, err := store.Inspect(args[0])
+	if err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(details, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(data))
 	return nil
 }
 

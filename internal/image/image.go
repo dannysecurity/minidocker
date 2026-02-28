@@ -19,7 +19,8 @@ const DefaultRoot = "/var/lib/minidocker/images"
 type ImageInfo struct {
 	Name   string
 	Digest string
-	Source string // empty for pulled images, "local" for InstallFromTar
+	Source string // empty for pulled images, "local" for InstallFromTar, "oci" for InstallFromOCI
+	Layers []string
 }
 
 // Store manages local image storage and retrieval.
@@ -234,6 +235,10 @@ func parseMeta(content string) ImageInfo {
 			info.Digest = value
 		case "source":
 			info.Source = value
+		case "layers":
+			if value != "" {
+				info.Layers = strings.Split(value, ",")
+			}
 		}
 	}
 	return info
