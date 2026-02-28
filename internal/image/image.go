@@ -176,6 +176,16 @@ func (s *Store) List() ([]ImageInfo, error) {
 	return images, nil
 }
 
+// Remove deletes a locally stored image directory, including metadata and rootfs.
+func (s *Store) Remove(name string) error {
+	dir := filepath.Join(s.root, sanitize(name))
+	rootfs := filepath.Join(dir, "rootfs")
+	if _, err := os.Stat(rootfs); os.IsNotExist(err) {
+		return fmt.Errorf("image %q not found", name)
+	}
+	return os.RemoveAll(dir)
+}
+
 // RootfsPath returns the path to a pulled image's root filesystem.
 func (s *Store) RootfsPath(name string) (string, error) {
 	rootfs := filepath.Join(s.root, sanitize(name), "rootfs")

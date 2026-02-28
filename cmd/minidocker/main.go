@@ -25,6 +25,7 @@ Usage:
   minidocker exec <id> <cmd...>        Run a command in a running container
   minidocker stop <id>                 Stop a running container
   minidocker rm <id>                   Remove a stopped container
+  minidocker rmi <image>               Remove a locally stored image
 `
 
 func main() {
@@ -57,6 +58,8 @@ func runCLI(args []string) int {
 		err = cmdStop(args[2:])
 	case "rm":
 		err = cmdRm(args[2:])
+	case "rmi":
+		err = cmdRmi(args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", args[1], usage)
 		return 1
@@ -287,4 +290,27 @@ func cmdRm(args []string) error {
 	}
 	rt := container.NewRuntime(container.DefaultRoot, nil)
 	return rt.Remove(args[0])
+}
+
+func cmdRmi(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: minidocker rmi <image>")
+	}
+	imageName := args[0]
+
+	rt := container.NewRuntime(container.DefaultRoot, nil)
+	using, err := rt.ContainersUsingImage(imageName)
+	if err != nil {
+		return err
+	}
+	if len(using) > 0 {
+		return fmt.Errorf("image %q is in use by %d container(s) — remove them first", imageName, len(using))
+	}
+
+	store := image.NewStore(image.DefaultRoot)
+	if err := store.Remove(imageName); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %s\n", imageName)
+	return nil
 }

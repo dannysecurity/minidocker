@@ -224,6 +224,22 @@ func (r *Runtime) ListFiltered(all bool) ([]Info, error) {
 	return containers, nil
 }
 
+// ContainersUsingImage returns every container whose Image field matches name.
+func (r *Runtime) ContainersUsingImage(imageName string) ([]Info, error) {
+	containers, err := r.List()
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []Info
+	for _, c := range containers {
+		if c.Image == imageName {
+			matches = append(matches, c)
+		}
+	}
+	return matches, nil
+}
+
 // ResolveID finds a container ID that matches the given prefix.
 func (r *Runtime) ResolveID(prefix string) (string, error) {
 	if prefix == "" {

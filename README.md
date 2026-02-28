@@ -8,7 +8,7 @@ networking, and streaming container logs.
 
 ## Features
 
-- **Images** — fetch, unpack, and store OCI-style root filesystems locally; list with `images`
+- **Images** — fetch, unpack, and store OCI-style root filesystems locally; list with `images`, remove with `rmi`
 - **Run** — start processes inside new PID, mount, UTS, IPC, and network namespaces
 - **Logs** — capture stdout/stderr from running containers
 - **Networking** — create veth pairs and assign IP addresses on a bridge
@@ -48,6 +48,9 @@ sudo ./minidocker inspect <container-id>
 # Stop and remove a container
 sudo ./minidocker stop <container-id>
 sudo ./minidocker rm <container-id>
+
+# Remove an unused image from the local store
+sudo ./minidocker rmi busybox:latest
 ```
 
 ## Architecture
@@ -72,6 +75,7 @@ flowchart TB
     exec[exec]
     stop[stop]
     rm[rm]
+    rmi[rmi]
   end
 
   subgraph Internal["internal/"]
@@ -95,11 +99,12 @@ flowchart TB
   exec --> container
   stop --> container
   rm --> container
+  rmi --> image
 ```
 
 | Package | Responsibility | Default on-disk root |
 |---------|----------------|----------------------|
-| `image` | Download tarballs, verify SHA-256, extract rootfs, list stored images | `/var/lib/minidocker/images/` |
+| `image` | Download tarballs, verify SHA-256, extract rootfs, list and remove stored images | `/var/lib/minidocker/images/` |
 | `container` | Persist metadata, stop/remove containers, orchestrate run lifecycle | `/var/lib/minidocker/containers/` |
 | `isolation` | Namespace flags, `container-init` wrapper, hostname and mount setup | (in-memory / child process) |
 | `network` | Bridge `minidocker0`, veth pairs, container IP allocation, iptables port forwarding | (kernel interfaces) |
@@ -216,6 +221,29 @@ stateDiagram-v2
 containers whose PID still responds to signal `0`, and deletes the entire
 `<id>/` directory—including `config.json`, `stdout.log`, and `stderr.log`.
 
+### Image lifecycle
+
+Images are independent of containers: pulling writes under `images/`, while
+`run` only reads the unpacked `rootfs/` path. Container metadata records the
+image name in `config.json` but does not pin the image directory.
+
+```mermaid
+stateDiagram-v2
+  [*] --> stored: pull or InstallFromTar
+  stored --> stored: pull again (re-extract rootfs)
+  stored --> [*]: rmi (RemoveAll image dir)
+```
+
+| Stage | On-disk state | Allowed commands |
+|-------|---------------|------------------|
+| `stored` | `<sanitized-name>/meta` + `rootfs/` | `images`, `run`, `rmi` (if unused) |
+| in use | same, plus ≥1 `containers/<id>/` referencing the image name | `images`, `run`; `rmi` refused |
+
+`rmi` checks `container.Runtime.ContainersUsingImage` before calling
+`image.Store.Remove`. Any container — running, stopped, or exited — blocks
+removal until `rm` deletes its directory. Re-pulling an existing name
+overwrites the previous rootfs in place.
+
 ### Exec flow
 
 `exec` does not start a new container. It re-enters the **existing** process
@@ -321,7 +349,7 @@ deleted with `rm`.
 ### Package map
 
 ```
-cmd/minidocker/       CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm)
+cmd/minidocker/       CLI entry point (pull, images, run, ps, inspect, logs, exec, stop, rm, rmi)
 cmd/container-init/   PID 1 helper that prepares rootfs and execs the workload
 internal/
   image/              image store, listing, and rootfs extraction

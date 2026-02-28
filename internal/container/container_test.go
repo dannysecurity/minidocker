@@ -130,6 +130,36 @@ func TestListFilteredRunningOnly(t *testing.T) {
 	}
 }
 
+func TestContainersUsingImage(t *testing.T) {
+	root := t.TempDir()
+	rt := NewRuntime(root, nil)
+
+	busybox := Info{ID: "busybox00001", Image: "busybox:latest", Status: "exited"}
+	alpine := Info{ID: "alpine000001", Image: "alpine:latest", Status: "running"}
+	writeContainerConfig(t, root, busybox.ID, busybox)
+	writeContainerConfig(t, root, alpine.ID, alpine)
+
+	matches, err := rt.ContainersUsingImage("busybox:latest")
+	if err != nil {
+		t.Fatalf("ContainersUsingImage: %v", err)
+	}
+	if len(matches) != 1 || matches[0].ID != busybox.ID {
+		t.Fatalf("ContainersUsingImage() = %+v, want [%s]", matches, busybox.ID)
+	}
+}
+
+func TestContainersUsingImageNone(t *testing.T) {
+	rt := NewRuntime(t.TempDir(), nil)
+
+	matches, err := rt.ContainersUsingImage("missing:latest")
+	if err != nil {
+		t.Fatalf("ContainersUsingImage: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("ContainersUsingImage() = %v, want empty", matches)
+	}
+}
+
 func TestResolveID(t *testing.T) {
 	root := t.TempDir()
 	rt := NewRuntime(root, nil)

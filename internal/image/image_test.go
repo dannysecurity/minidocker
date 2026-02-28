@@ -42,6 +42,36 @@ func TestInstallFromTar(t *testing.T) {
 	}
 }
 
+func TestRemove(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	fixture := testutil.FixturePath(t, "tiny-rootfs.tar.gz")
+
+	if err := store.InstallFromTar("tiny:latest", fixture); err != nil {
+		t.Fatalf("InstallFromTar: %v", err)
+	}
+
+	if err := store.Remove("tiny:latest"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	if _, err := store.RootfsPath("tiny:latest"); err == nil {
+		t.Fatal("expected error after Remove")
+	}
+}
+
+func TestRemoveNotFound(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	err := store.Remove("missing:latest")
+	if err == nil {
+		t.Fatal("expected error for missing image")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error = %q, want not found", err)
+	}
+}
+
 func TestRootfsPathMissing(t *testing.T) {
 	store := NewStore(t.TempDir())
 
