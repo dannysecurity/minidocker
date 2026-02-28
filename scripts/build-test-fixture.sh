@@ -112,8 +112,28 @@ EOF
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
   -o "${rootfs}/bin/tcpecho" "${build_dir}/tcpecho.go"
+
+cat > "${build_dir}/writestderr.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	if len(os.Args) > 1 {
+		fmt.Fprintln(os.Stderr, strings.Join(os.Args[1:], " "))
+	}
+}
+EOF
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
+  -o "${rootfs}/bin/writestderr" "${build_dir}/writestderr.go"
 echo "tiny-fixture" > "${rootfs}/etc/hostname"
-chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep" "${rootfs}/bin/tcpecho"
+chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep" \
+  "${rootfs}/bin/tcpecho" "${rootfs}/bin/writestderr"
 
 mkdir -p "${fixture_dir}"
 tar -C "${rootfs}" -czf "${fixture_dir}/tiny-rootfs.tar.gz" bin etc proc dev tmp

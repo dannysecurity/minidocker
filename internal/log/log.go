@@ -48,10 +48,31 @@ func (l *Logger) Read(containerID string) ([]byte, error) {
 	return l.readCombined(containerID, 0)
 }
 
+// ReadStdout returns captured stdout for a container.
+func (l *Logger) ReadStdout(containerID string) ([]byte, error) {
+	return l.readStream(containerID, "stdout.log")
+}
+
+// ReadStderr returns captured stderr for a container.
+func (l *Logger) ReadStderr(containerID string) ([]byte, error) {
+	return l.readStream(containerID, "stderr.log")
+}
+
 // ReadTail returns the last n bytes of combined stdout and stderr logs.
 // When n is zero or negative the full log is returned.
 func (l *Logger) ReadTail(containerID string, n int) ([]byte, error) {
 	return l.readCombined(containerID, n)
+}
+
+func (l *Logger) readStream(containerID, name string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(l.root, containerID, name))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return data, nil
 }
 
 func (l *Logger) readCombined(containerID string, tail int) ([]byte, error) {

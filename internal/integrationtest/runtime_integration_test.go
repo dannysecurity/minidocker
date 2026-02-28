@@ -264,6 +264,47 @@ func TestIntegration_PortMappingForwardsTCP(t *testing.T) {
 	}
 }
 
+func TestIntegration_StderrCapturedFromFixture(t *testing.T) {
+	testutil.RequireRoot(t)
+	env := NewEnv(t)
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/writestderr", "error", "from-fixture"},
+		Detach:  true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	WaitForStatus(t, env.Runtime, id, "exited", 10*time.Second)
+
+	stderr, err := env.Logger.ReadStderr(id)
+	if err != nil {
+		t.Fatalf("ReadStderr: %v", err)
+	}
+	if !strings.Contains(string(stderr), "error from-fixture") {
+		t.Fatalf("stderr = %q, want output containing %q", stderr, "error from-fixture")
+	}
+
+	stdout, err := env.Logger.ReadStdout(id)
+	if err != nil {
+		t.Fatalf("ReadStdout: %v", err)
+	}
+	if len(stdout) != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+
+	combined, err := env.Logger.Read(id)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !strings.Contains(string(combined), "error from-fixture") {
+		t.Fatalf("combined logs = %q, want stderr content", combined)
+	}
+}
+
 func TestIntegration_ExecIntoRunningFixture(t *testing.T) {
 	testutil.RequireRoot(t)
 	env := NewEnv(t)
