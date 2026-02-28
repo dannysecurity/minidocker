@@ -29,6 +29,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := isolation.SetNoNewPrivileges(); err != nil {
+		fmt.Fprintf(os.Stderr, "container-init: harden: %v\n", err)
+		os.Exit(1)
+	}
+
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

@@ -305,6 +305,28 @@ func TestIntegration_StderrCapturedFromFixture(t *testing.T) {
 	}
 }
 
+func TestIntegration_DevNullAccessibleInContainer(t *testing.T) {
+	testutil.RequireRoot(t)
+	env := NewEnv(t)
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/opendevnull"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logs, err := env.Logger.Read(id)
+	if err != nil {
+		t.Fatalf("Read logs: %v", err)
+	}
+	if !strings.Contains(string(logs), "dev-null-ok") {
+		t.Fatalf("logs = %q, want output containing %q", logs, "dev-null-ok")
+	}
+}
+
 func TestIntegration_ExecIntoRunningFixture(t *testing.T) {
 	testutil.RequireRoot(t)
 	env := NewEnv(t)

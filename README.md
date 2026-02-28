@@ -186,7 +186,7 @@ sequenceDiagram
   CLI->>Logger: NewLogger + Attach(id)
   CLI->>Runtime: Run(spec)
   Runtime->>Runtime: isolation.Wrapper.Command
-  Runtime->>Runtime: container-init sets hostname, mounts proc, chroot
+  Runtime->>Runtime: container-init sets hostname, pivot_root, mounts pseudo-fs
   Runtime->>Net: Setup(id, pid)
   Net->>Net: veth pair + bridge + IP
   alt -p host:container
@@ -303,7 +303,7 @@ inside these `clone(2)` flags:
 |------|-----------|--------|
 | `CLONE_NEWUTS` | UTS | Separate hostname (set via `sethostname(2)` to container ID) |
 | `CLONE_NEWPID` | PID | Process tree isolated from host; init reaps zombies |
-| `CLONE_NEWNS` | Mount | Private mount namespace; rootfs via `chroot(2)` |
+| `CLONE_NEWNS` | Mount | Private mount namespace; rootfs via `pivot_root(2)` |
 | `CLONE_NEWIPC` | IPC | Separate SysV IPC / POSIX message queues |
 | `CLONE_NEWNET` | Network | Dedicated network stack; veth moved in after start |
 
@@ -311,9 +311,14 @@ Inside the new namespaces, `container-init`:
 
 1. Sets the UTS hostname to the container ID
 2. Marks mounts `MS_PRIVATE` so changes stay inside the container
-3. `chroot(2)` into the image rootfs when one is configured
-4. Mounts a fresh `procfs` at `/proc`
-5. Execs the user command and reaps orphaned children until the workload exits
+3. `pivot_root(2)` into the image rootfs when one is configured (stronger than `chroot`)
+4. Mounts standard pseudo filesystems: `procfs`, `tmpfs` on `/dev` and `/tmp`, essential
+   device nodes, `devpts`, and read-only `sysfs`
+5. Execs the user command with `NoNewPrivileges` and reaps orphaned children until the
+   workload exits
+
+Both `container-init` and the user workload are started with `NoNewPrivileges` so
+file-based privilege escalation (e.g. setuid binaries) is blocked inside the container.
 
 Place `container-init` next to the `minidocker` binary, or set `MINIDOCKER_INIT`
 to its path. Integration tests build the helper automatically.
@@ -366,8 +371,8 @@ testdata/fixtures/    checked-in rootfs tarball for offline tests
 1. **Pull** downloads a tarball, verifies its digest, and unpacks it into
    `/var/lib/minidocker/images/<name>/rootfs`.
 2. **Run** uses `isolation.Wrapper` to start `container-init` with `clone(2)`
-   namespace flags. The init process sets the hostname, chroots into the image
-   rootfs, mounts `/proc`, and execs the requested command.
+   namespace flags. The init process sets the hostname, pivots into the image
+   rootfs, mounts `/proc`, `/dev`, `/sys`, and `/tmp`, and execs the requested command.
 3. **Network** creates a veth pair, moves one end into the container namespace,
    attaches the host end to the `minidocker0` bridge, and optionally installs
    iptables DNAT rules for `-p` port mappings.
@@ -383,7 +388,7 @@ fixture instead of downloading images:
 go test ./...
 ```
 
-Integration tests exercise the full run path (namespaces, chroot, log capture) with the
+Integration tests exercise the full run path (namespaces, pivot_root, log capture) with the
 fixture image and require root:
 
 ```bash

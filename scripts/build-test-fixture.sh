@@ -131,9 +131,31 @@ EOF
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
   -o "${rootfs}/bin/writestderr" "${build_dir}/writestderr.go"
+
+cat > "${build_dir}/opendevnull.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	f, err := os.OpenFile("/dev/null", os.O_WRONLY, 0)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	_ = f.Close()
+	fmt.Println("dev-null-ok")
+}
+EOF
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
+  -o "${rootfs}/bin/opendevnull" "${build_dir}/opendevnull.go"
 echo "tiny-fixture" > "${rootfs}/etc/hostname"
 chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep" \
-  "${rootfs}/bin/tcpecho" "${rootfs}/bin/writestderr"
+  "${rootfs}/bin/tcpecho" "${rootfs}/bin/writestderr" "${rootfs}/bin/opendevnull"
 
 mkdir -p "${fixture_dir}"
 tar -C "${rootfs}" -czf "${fixture_dir}/tiny-rootfs.tar.gz" bin etc proc dev tmp
