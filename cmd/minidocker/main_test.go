@@ -92,6 +92,23 @@ func TestCmdRunUsageValidation(t *testing.T) {
 	}
 }
 
+func TestCmdRunIsolationFlagValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "invalid net mode", args: []string{"--net=container", "busybox:latest", "echo"}},
+		{name: "invalid pid mode", args: []string{"--pid=shared", "busybox:latest", "echo"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := cmdRun(tc.args); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func TestCmdRunPortMappingValidation(t *testing.T) {
 	tests := []struct {
 		name string

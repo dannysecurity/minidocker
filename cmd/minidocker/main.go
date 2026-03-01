@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/dannysecurity/minidocker/internal/container"
 	"github.com/dannysecurity/minidocker/internal/image"
+	"github.com/dannysecurity/minidocker/internal/isolation"
 	"github.com/dannysecurity/minidocker/internal/log"
 	"github.com/dannysecurity/minidocker/internal/network"
 )
@@ -18,7 +20,7 @@ Usage:
   minidocker pull <image>              Download and store an image
   minidocker images                    List locally stored images
   minidocker inspect-image <image>     Show image manifest and layer metadata
-  minidocker run [-d] [-p host:container] <image> <cmd...>
+  minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <cmd...>
                                        Run a command in a new container
   minidocker ps [-a] [-q]              List containers (running by default)
   minidocker inspect <id>              Show container metadata as JSON
@@ -131,6 +133,7 @@ func cmdInspectImage(args []string) error {
 func cmdRun(args []string) error {
 	detach := false
 	var portMappings []network.PortMapping
+	var isolationProfile isolation.Profile
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -138,7 +141,7 @@ func cmdRun(args []string) error {
 			detach = true
 		case "-p", "--publish":
 			if i+1 >= len(args) {
-				return fmt.Errorf("usage: minidocker run [-d] [-p host:container] <image> <command...>")
+				return fmt.Errorf("usage: minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <command...>")
 			}
 			mapping, err := network.ParsePortMapping(args[i+1])
 			if err != nil {
@@ -147,6 +150,30 @@ func cmdRun(args []string) error {
 			portMappings = append(portMappings, mapping)
 			i++
 		default:
+			if strings.HasPrefix(args[i], "--net=") {
+				mode := strings.TrimPrefix(args[i], "--net=")
+				switch mode {
+				case "host":
+					isolationProfile.HostNetwork = true
+				case "bridge":
+					isolationProfile.HostNetwork = false
+				default:
+					return fmt.Errorf("unsupported --net mode %q (supported: host, bridge)", mode)
+				}
+				continue
+			}
+			if strings.HasPrefix(args[i], "--pid=") {
+				mode := strings.TrimPrefix(args[i], "--pid=")
+				switch mode {
+				case "host":
+					isolationProfile.HostPID = true
+				case "private":
+					isolationProfile.HostPID = false
+				default:
+					return fmt.Errorf("unsupported --pid mode %q (supported: host, private)", mode)
+				}
+				continue
+			}
 			positional = append(positional, args[i])
 		}
 	}
@@ -156,7 +183,7 @@ func cmdRun(args []string) error {
 	}
 
 	if len(positional) < 2 {
-		return fmt.Errorf("usage: minidocker run [-d] [-p host:container] <image> <command...>")
+		return fmt.Errorf("usage: minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <command...>")
 	}
 	imageName := positional[0]
 	command := positional[1:]
@@ -179,6 +206,7 @@ func cmdRun(args []string) error {
 		Command:      command,
 		Detach:       detach,
 		PortMappings: portMappings,
+		Isolation:    isolationProfile,
 	})
 	return err
 }

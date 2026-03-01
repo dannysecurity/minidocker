@@ -26,6 +26,7 @@ type RunSpec struct {
 	Command      []string
 	Detach       bool
 	PortMappings []network.PortMapping
+	Isolation    isolation.Profile
 }
 
 // Info holds metadata about a running or stopped container.
@@ -92,16 +93,20 @@ func (r *Runtime) Run(spec RunSpec) (string, error) {
 	}
 
 	netMgr := network.NewManager(network.DefaultBridge)
-	containerIP, err := netMgr.Setup(id, info.PID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: network setup failed: %v\n", err)
-	} else {
-		info.IP = containerIP
-		if len(spec.PortMappings) > 0 {
-			if err := netMgr.ApplyPortMappings(containerIP, spec.PortMappings); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: port mapping failed: %v\n", err)
+	if !spec.Isolation.HostNetwork {
+		containerIP, err := netMgr.Setup(id, info.PID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: network setup failed: %v\n", err)
+		} else {
+			info.IP = containerIP
+			if len(spec.PortMappings) > 0 {
+				if err := netMgr.ApplyPortMappings(containerIP, spec.PortMappings); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: port mapping failed: %v\n", err)
+				}
 			}
 		}
+	} else if len(spec.PortMappings) > 0 {
+		fmt.Fprintf(os.Stderr, "warning: port mappings ignored with host network\n")
 	}
 
 	if err := r.saveInfo(containerDir, info); err != nil {
@@ -134,6 +139,7 @@ func (r *Runtime) startContainer(spec RunSpec) (string, *exec.Cmd, []io.Closer, 
 		ID:      id,
 		Rootfs:  spec.Rootfs,
 		Command: spec.Command,
+		Profile: spec.Isolation,
 	})
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("build isolated command: %w", err)

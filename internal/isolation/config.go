@@ -23,7 +23,9 @@ type Config struct {
 	Rootfs string
 	// Command is the process to exec after namespace and rootfs setup.
 	Command []string
-	// CloneFlags overrides DefaultCloneFlags when non-zero.
+	// Profile selects namespace isolation when CloneFlags is zero.
+	Profile Profile
+	// CloneFlags overrides Profile.CloneFlags() when non-zero.
 	CloneFlags uintptr
 }
 
@@ -46,5 +48,5 @@ func (c Config) cloneFlags() uintptr {
 	if c.CloneFlags != 0 {
 		return c.CloneFlags
 	}
-	return DefaultCloneFlags
+	return c.Profile.CloneFlags()
 }

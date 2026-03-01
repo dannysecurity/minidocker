@@ -149,6 +149,26 @@ func TestWrapperCommandCustomCloneFlags(t *testing.T) {
 	}
 }
 
+func TestWrapperCommandHostNetworkProfile(t *testing.T) {
+	initPath := filepath.Join(t.TempDir(), initBinaryName)
+	if err := os.WriteFile(initPath, []byte{0x7f, 'E', 'L', 'F'}, 0755); err != nil {
+		t.Fatalf("write fake init: %v", err)
+	}
+
+	want := Profile{HostNetwork: true}.CloneFlags()
+	cmd, err := (&Wrapper{InitPath: initPath}).Command(Config{
+		ID:      "abc",
+		Command: []string{"/bin/true"},
+		Profile: Profile{HostNetwork: true},
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+	if cmd.SysProcAttr.Cloneflags != want {
+		t.Fatalf("Cloneflags = %#x, want %#x", cmd.SysProcAttr.Cloneflags, want)
+	}
+}
+
 func TestWrapperResolveInitPathMissing(t *testing.T) {
 	w := &Wrapper{}
 	if _, err := w.resolveInitPath(); err == nil {

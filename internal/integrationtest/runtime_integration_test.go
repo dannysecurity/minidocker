@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dannysecurity/minidocker/internal/container"
+	"github.com/dannysecurity/minidocker/internal/isolation"
 	"github.com/dannysecurity/minidocker/internal/network"
 	"github.com/dannysecurity/minidocker/internal/testutil"
 )
@@ -351,6 +352,38 @@ func TestIntegration_ExecIntoRunningFixture(t *testing.T) {
 	})
 	if !strings.Contains(out, "from-exec") {
 		t.Fatalf("exec stdout = %q, want output containing %q", out, "from-exec")
+	}
+}
+
+func TestIntegration_HostNetworkPreservesHostname(t *testing.T) {
+	testutil.RequireRoot(t)
+	env := NewEnv(t)
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/readhostname"},
+		Isolation: isolation.Profile{HostNetwork: true},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	logs, err := env.Logger.Read(id)
+	if err != nil {
+		t.Fatalf("Read logs: %v", err)
+	}
+	got := strings.TrimSpace(string(logs))
+	if got != id {
+		t.Fatalf("hostname = %q, want container id %q", got, id)
+	}
+
+	info, err := env.Runtime.Inspect(id)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if info.IP != "" {
+		t.Fatalf("Inspect().IP = %q, want empty with host network", info.IP)
 	}
 }
 
