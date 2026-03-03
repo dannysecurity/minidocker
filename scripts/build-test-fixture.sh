@@ -153,9 +153,26 @@ EOF
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
   -o "${rootfs}/bin/opendevnull" "${build_dir}/opendevnull.go"
+
+cat > "${build_dir}/readppid.go" <<'EOF'
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	fmt.Println(os.Getppid())
+}
+EOF
+
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" \
+  -o "${rootfs}/bin/readppid" "${build_dir}/readppid.go"
 echo "tiny-fixture" > "${rootfs}/etc/hostname"
 chmod +x "${rootfs}/bin/echo" "${rootfs}/bin/readhostname" "${rootfs}/bin/sleep" \
-  "${rootfs}/bin/tcpecho" "${rootfs}/bin/writestderr" "${rootfs}/bin/opendevnull"
+  "${rootfs}/bin/tcpecho" "${rootfs}/bin/writestderr" "${rootfs}/bin/opendevnull" \
+  "${rootfs}/bin/readppid"
 
 mkdir -p "${fixture_dir}"
 tar -C "${rootfs}" -czf "${fixture_dir}/tiny-rootfs.tar.gz" bin etc proc dev tmp

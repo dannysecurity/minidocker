@@ -8,12 +8,14 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dannysecurity/minidocker/internal/container"
 	"github.com/dannysecurity/minidocker/internal/isolation"
+	"github.com/dannysecurity/minidocker/internal/log"
 	"github.com/dannysecurity/minidocker/internal/network"
 	"github.com/dannysecurity/minidocker/internal/testutil"
 )
@@ -355,6 +357,51 @@ func TestIntegration_ExecIntoRunningFixture(t *testing.T) {
 	}
 }
 
+func TestIntegration_IsolatedPIDNamespace(t *testing.T) {
+	testutil.RequireRoot(t)
+	env := NewEnv(t)
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/readppid"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	ppid, err := readFixtureIntOutput(t, env.Logger, id)
+	if err != nil {
+		t.Fatalf("read ppid: %v", err)
+	}
+	if ppid != 1 {
+		t.Fatalf("ppid = %d, want 1 (container-init is PID 1 in isolated namespace)", ppid)
+	}
+}
+
+func TestIntegration_HostPIDSharesNamespace(t *testing.T) {
+	testutil.RequireRoot(t)
+	env := NewEnv(t)
+
+	id, err := env.Runtime.Run(container.RunSpec{
+		Image:   ImageRef,
+		Rootfs:  env.Rootfs,
+		Command: []string{"/bin/readppid"},
+		Isolation: isolation.Profile{HostPID: true},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	ppid, err := readFixtureIntOutput(t, env.Logger, id)
+	if err != nil {
+		t.Fatalf("read ppid: %v", err)
+	}
+	if ppid == 1 {
+		t.Fatalf("ppid = 1 with --pid=host, want host init parent (not namespace PID 1)")
+	}
+}
+
 func TestIntegration_HostNetworkPreservesHostname(t *testing.T) {
 	testutil.RequireRoot(t)
 	env := NewEnv(t)
@@ -385,6 +432,16 @@ func TestIntegration_HostNetworkPreservesHostname(t *testing.T) {
 	if info.IP != "" {
 		t.Fatalf("Inspect().IP = %q, want empty with host network", info.IP)
 	}
+}
+
+func readFixtureIntOutput(t *testing.T, logger *log.Logger, id string) (int, error) {
+	t.Helper()
+
+	logs, err := logger.Read(id)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(logs)))
 }
 
 func captureStdout(t *testing.T, fn func()) string {

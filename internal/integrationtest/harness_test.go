@@ -20,7 +20,7 @@ func TestFixtureTarballContainsHelpers(t *testing.T) {
 		t.Fatalf("RootfsPath: %v", err)
 	}
 
-	for _, bin := range []string{"echo", "readhostname", "sleep", "tcpecho", "writestderr"} {
+	for _, bin := range []string{"echo", "readhostname", "readppid", "sleep", "tcpecho", "writestderr"} {
 		path := filepath.Join(rootfs, "bin", bin)
 		info, err := os.Stat(path)
 		if err != nil {
