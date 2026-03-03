@@ -83,15 +83,20 @@ func portMappingRules(containerIP string, mapping PortMapping) []natRule {
 	hostPort := fmt.Sprintf("%d", mapping.HostPort)
 	containerPort := fmt.Sprintf("%d", mapping.ContainerPort)
 	dest := containerIP + ":" + containerPort
+	proto := mapping.protocol()
 
 	dnatMatch := []string{
-		"-p", "tcp",
+		"-p", proto,
 		"--dport", hostPort,
 		"-j", "DNAT",
 		"--to-destination", dest,
 	}
+	if mapping.HostIP != "" {
+		dnatMatch = insertAfter(dnatMatch, "-p", "-d", mapping.HostIP)
+	}
+
 	forwardMatch := []string{
-		"-p", "tcp",
+		"-p", proto,
 		"-d", containerIP,
 		"--dport", containerPort,
 		"-j", "ACCEPT",
@@ -99,9 +104,20 @@ func portMappingRules(containerIP string, mapping PortMapping) []natRule {
 
 	return []natRule{
 		{table: "nat", chain: "PREROUTING", args: dnatMatch},
-		{table: "nat", chain: "OUTPUT", args: dnatMatch},
+		{table: "nat", chain: "OUTPUT", args: append([]string{}, dnatMatch...)},
 		{table: "filter", chain: "FORWARD", args: forwardMatch},
 	}
+}
+
+func insertAfter(args []string, after string, extra ...string) []string {
+	out := make([]string, 0, len(args)+len(extra))
+	for i := 0; i < len(args); i++ {
+		out = append(out, args[i])
+		if args[i] == after {
+			out = append(out, extra...)
+		}
+	}
+	return out
 }
 
 func writeSysctl(path, value string) error {

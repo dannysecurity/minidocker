@@ -19,7 +19,7 @@ func TestMasqueradeArgs(t *testing.T) {
 	}
 }
 
-func TestPortMappingRules(t *testing.T) {
+func TestPortMappingRulesTCP(t *testing.T) {
 	rules := portMappingRules("172.17.0.42", PortMapping{HostPort: 8080, ContainerPort: 80})
 	if len(rules) != 3 {
 		t.Fatalf("got %d rules, want 3", len(rules))
@@ -29,7 +29,7 @@ func TestPortMappingRules(t *testing.T) {
 	if preroute.table != "nat" || preroute.chain != "PREROUTING" {
 		t.Fatalf("first rule = %+v, want PREROUTING DNAT", preroute)
 	}
-	if !containsAll(preroute.args, "--dport", "8080", "--to-destination", "172.17.0.42:80") {
+	if !containsAll(preroute.args, "-p", "tcp", "--dport", "8080", "--to-destination", "172.17.0.42:80") {
 		t.Fatalf("PREROUTING args = %v", preroute.args)
 	}
 
@@ -42,8 +42,22 @@ func TestPortMappingRules(t *testing.T) {
 	if forward.table != "filter" || forward.chain != "FORWARD" {
 		t.Fatalf("third rule = %+v, want FORWARD accept", forward)
 	}
-	if !containsAll(forward.args, "-d", "172.17.0.42", "--dport", "80") {
+	if !containsAll(forward.args, "-p", "tcp", "-d", "172.17.0.42", "--dport", "80") {
 		t.Fatalf("FORWARD args = %v", forward.args)
+	}
+}
+
+func TestPortMappingRulesUDPWithBindIP(t *testing.T) {
+	rules := portMappingRules("172.17.0.10", PortMapping{
+		HostIP:        "127.0.0.1",
+		HostPort:      5353,
+		ContainerPort: 53,
+		Protocol:      "udp",
+	})
+
+	preroute := rules[0]
+	if !containsAll(preroute.args, "-p", "udp", "-d", "127.0.0.1", "--dport", "5353", "--to-destination", "172.17.0.10:53") {
+		t.Fatalf("PREROUTING args = %v", preroute.args)
 	}
 }
 

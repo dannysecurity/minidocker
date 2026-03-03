@@ -12,18 +12,57 @@ func TestParsePortMapping(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:  "valid mapping",
+			name:  "host container mapping",
 			input: "8080:80",
-			want:  PortMapping{HostPort: 8080, ContainerPort: 80},
+			want:  PortMapping{HostPort: 8080, ContainerPort: 80, Protocol: "tcp"},
+		},
+		{
+			name:  "shorthand same port",
+			input: "80",
+			want:  PortMapping{HostPort: 80, ContainerPort: 80, Protocol: "tcp"},
+		},
+		{
+			name:  "bind address",
+			input: "127.0.0.1:8080:80",
+			want: PortMapping{
+				HostIP:        "127.0.0.1",
+				HostPort:      8080,
+				ContainerPort: 80,
+				Protocol:      "tcp",
+			},
+		},
+		{
+			name:  "udp mapping",
+			input: "5353:53/udp",
+			want: PortMapping{
+				HostPort:      5353,
+				ContainerPort: 53,
+				Protocol:      "udp",
+			},
+		},
+		{
+			name:  "bind address udp",
+			input: "127.0.0.1:5353:53/udp",
+			want: PortMapping{
+				HostIP:        "127.0.0.1",
+				HostPort:      5353,
+				ContainerPort: 53,
+				Protocol:      "udp",
+			},
 		},
 		{
 			name:  "high ports",
 			input: "65535:65535",
-			want:  PortMapping{HostPort: 65535, ContainerPort: 65535},
+			want:  PortMapping{HostPort: 65535, ContainerPort: 65535, Protocol: "tcp"},
 		},
 		{
-			name:    "missing container port",
-			input:   "8080",
+			name:    "unsupported protocol",
+			input:   "8080:80/sctp",
+			wantErr: true,
+		},
+		{
+			name:    "invalid host ip",
+			input:   "not-an-ip:8080:80",
 			wantErr: true,
 		},
 		{
@@ -93,6 +132,21 @@ func TestValidatePortMappings(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "same port different protocol",
+			input: []PortMapping{
+				{HostPort: 53, ContainerPort: 53},
+				{HostPort: 53, ContainerPort: 53, Protocol: "udp"},
+			},
+		},
+		{
+			name: "duplicate bind address",
+			input: []PortMapping{
+				{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80},
+				{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 90},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -124,12 +178,12 @@ func TestFormatPorts(t *testing.T) {
 			want:  "8080->80/tcp",
 		},
 		{
-			name: "multiple",
+			name: "bind address and udp",
 			input: []PortMapping{
-				{HostPort: 8080, ContainerPort: 80},
-				{HostPort: 8443, ContainerPort: 443},
+				{HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 80},
+				{HostPort: 5353, ContainerPort: 53, Protocol: "udp"},
 			},
-			want: "8080->80/tcp, 8443->443/tcp",
+			want: "127.0.0.1:8080->80/tcp, 5353->53/udp",
 		},
 	}
 

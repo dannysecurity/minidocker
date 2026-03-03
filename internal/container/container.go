@@ -76,6 +76,16 @@ func (r *Runtime) wrapper() *isolation.Wrapper {
 // When Detach is false the call blocks until the container exits; when true it
 // returns immediately and updates status in the background.
 func (r *Runtime) Run(spec RunSpec) (string, error) {
+	if len(spec.PortMappings) > 0 && !spec.Isolation.HostNetwork {
+		registry, err := network.LoadPortRegistry(r.root)
+		if err != nil {
+			return "", fmt.Errorf("load port registry: %w", err)
+		}
+		if err := registry.CheckConflicts("", spec.PortMappings); err != nil {
+			return "", err
+		}
+	}
+
 	id, cmd, closers, err := r.startContainer(spec)
 	if err != nil {
 		return "", err

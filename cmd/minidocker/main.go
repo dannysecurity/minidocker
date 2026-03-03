@@ -20,7 +20,7 @@ Usage:
   minidocker pull <image>              Download and store an image
   minidocker images                    List locally stored images
   minidocker inspect-image <image>     Show image manifest and layer metadata
-  minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <cmd...>
+  minidocker run [-d] [-p publish] [--net=host|bridge] [--pid=host|private] <image> <cmd...>
                                        Run a command in a new container
   minidocker ps [-a] [-q]              List containers (running by default)
   minidocker inspect <id>              Show container metadata as JSON
@@ -141,7 +141,7 @@ func cmdRun(args []string) error {
 			detach = true
 		case "-p", "--publish":
 			if i+1 >= len(args) {
-				return fmt.Errorf("usage: minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <command...>")
+				return fmt.Errorf("usage: minidocker run [-d] [-p publish] [--net=host|bridge] [--pid=host|private] <image> <command...>")
 			}
 			mapping, err := network.ParsePortMapping(args[i+1])
 			if err != nil {
@@ -183,7 +183,7 @@ func cmdRun(args []string) error {
 	}
 
 	if len(positional) < 2 {
-		return fmt.Errorf("usage: minidocker run [-d] [-p host:container] [--net=host|bridge] [--pid=host|private] <image> <command...>")
+		return fmt.Errorf("usage: minidocker run [-d] [-p publish] [--net=host|bridge] [--pid=host|private] <image> <command...>")
 	}
 	imageName := positional[0]
 	command := positional[1:]

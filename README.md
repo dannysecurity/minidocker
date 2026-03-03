@@ -42,6 +42,10 @@ sudo ./minidocker run busybox:latest /bin/sh
 # Run detached and publish a port (host traffic forwarded via iptables DNAT)
 sudo ./minidocker run -d -p 8080:80 busybox:latest /bin/httpd -f
 
+# Shorthand publish, UDP, and localhost-only bindings are also supported
+sudo ./minidocker run -d -p 80 busybox:latest /bin/httpd -f
+sudo ./minidocker run -d -p 127.0.0.1:5353:53/udp busybox:latest /bin/udpecho
+
 # View logs from a detached container
 sudo ./minidocker logs <container-id>
 
@@ -194,7 +198,8 @@ sequenceDiagram
   Runtime->>Runtime: container-init sets hostname, pivot_root, mounts pseudo-fs
   Runtime->>Net: Setup(id, pid)
   Net->>Net: veth pair + bridge + IP
-  alt -p host:container
+  alt -p publish
+    Runtime->>Net: LoadPortRegistry + CheckConflicts
     Runtime->>Net: ApplyPortMappings(ip, mappings)
     Net->>Net: iptables DNAT + FORWARD
   end
@@ -397,12 +402,22 @@ Networking runs **after** `cmd.Start()` so the child PID is available for
 `ip link set … netns /proc/<pid>/ns/net`. The host bridge `minidocker0` uses
 `172.17.0.1/16`; each container receives `172.17.0.<n>/24` derived from its ID.
 
-**Port publishing** (`-p host:container`) installs iptables DNAT rules on
-`PREROUTING` and `OUTPUT`, plus a `FORWARD` accept rule, so traffic to the host
-port reaches the container's bridge IP. Outbound container traffic is NATed via
-a one-time `MASQUERADE` rule on the bridge subnet. Port mappings and the
-assigned IP are persisted in `config.json` and removed when the container is
-deleted with `rm`.
+**Port publishing** (`-p`) installs iptables DNAT rules on `PREROUTING` and
+`OUTPUT`, plus a `FORWARD` accept rule, so traffic to the host port reaches the
+container's bridge IP. Supported publish forms:
+
+| Form | Example | Meaning |
+|------|---------|---------|
+| Shorthand | `-p 80` | Publish container port 80 on host port 80/tcp |
+| Host mapping | `-p 8080:80` | Forward host 8080/tcp to container 80/tcp |
+| Bind address | `-p 127.0.0.1:8080:80` | Listen on localhost only |
+| UDP | `-p 5353:53/udp` | Forward UDP instead of TCP |
+
+A **port registry** scans existing container metadata before `run` and rejects
+conflicting host bindings (including all-interfaces vs localhost conflicts).
+Outbound container traffic is NATed via a one-time `MASQUERADE` rule on the
+bridge subnet. Port mappings and the assigned IP are persisted in `config.json`
+and removed when the container is deleted with `rm`.
 
 ### Runtime behavior
 
@@ -413,9 +428,11 @@ deleted with `rm`.
   `<id>/config.json`, `stdout.log`, and `stderr.log` under the same folder.
 - **Best-effort networking** — if veth/bridge setup fails, minidocker prints a
   warning and keeps the container running without external connectivity.
-- **Port publish** — `-p host:container` validates at the CLI, installs iptables
-  DNAT/FORWARD rules after network setup, and persists mappings in
-  `config.json`; `ps` shows a `PORTS` column.
+- **Port publish** — `-p` accepts Docker-style publish specs (`80`, `8080:80`,
+  `127.0.0.1:8080:80`, `5353:53/udp`). A port registry rejects cross-container
+  host-port conflicts before `run` starts the workload. iptables DNAT/FORWARD
+  rules are installed after network setup and persisted in `config.json`; `ps`
+  shows a `PORTS` column.
 - **Offline images** — tests and fixtures load tarballs via
   `image.Store.InstallFromTar` instead of `Pull`; `images` shows `source=local`.
 - **Cleanup** — `rm` removes stopped/exited container directories; running
@@ -430,7 +447,7 @@ internal/
   image/              image store, listing, and rootfs extraction
   isolation/          namespace wrapper, clone flags, rootfs preparation
   container/          process lifecycle, metadata I/O, removal
-  network/            bridge and veth management, iptables port forwarding
+  network/            bridge and veth management, port registry, iptables port forwarding
   log/                stdout/stderr capture
   testutil/           shared helpers for unit and integration tests
 testdata/fixtures/    checked-in rootfs tarball for offline tests
